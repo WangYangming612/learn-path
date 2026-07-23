@@ -4,10 +4,15 @@ version = "0.1.0"
 description = "LearnPath - 个性化学习路径动态生成系统后端"
 requires-python = ">=3.11"
 dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.18.5",
+    "chromadb>=1.5.9",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
+    "pyyaml>=6.0.3",
+    "sqlalchemy>=2.0.51",
     "uvicorn[standard]>=0.32.0",
 ]
