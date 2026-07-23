@@ -8,6 +8,8 @@ Why: 统一管理路由注册、中间件配置和应用生命周期
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1.auth import router as auth_router
+
 # 创建 FastAPI 应用实例
 # What: FastAPI 应用对象，用于注册路由和中间件
 # Why: FastAPI 是异步 Web 框架，支持自动生成 OpenAPI 文档（Swagger）
@@ -29,6 +31,11 @@ app.add_middleware(
     allow_methods=["*"],  # 允许所有 HTTP 方法
     allow_headers=["*"],  # 允许所有请求头
 )
+
+# 注册认证路由
+# What: 将 auth 模块的路由注册到 FastAPI 应用
+# Why: 不注册则路由不可用，include_router 统一管理所有子路由
+app.include_router(auth_router, prefix="/api/v1")
 
 
 @app.get("/")
