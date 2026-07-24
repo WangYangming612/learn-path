@@ -12,6 +12,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.feedback import router as feedback_router
 from app.api.v1.plans import router as plans_router
 from app.api.v1.tasks import router as tasks_router
+from app.api.v1.profile import router as profile_router
 
 # 创建 FastAPI 应用实例
 # What: FastAPI 应用对象，用于注册路由和中间件
@@ -42,6 +43,7 @@ app.include_router(auth_router, prefix="/api/v1")
 app.include_router(feedback_router, prefix="/api/v1")
 app.include_router(plans_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")
+app.include_router(profile_router, prefix="/api/v1")
 
 
 
