@@ -21,7 +21,12 @@ from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 
 from app.agents.state import ProfileAgentState
-from app.core.profile_service import get_user_profile, update_profile
+from app.core.profile_service import (
+    DEFAULT_LABEL,
+    PROFILE_DIMENSIONS,
+    get_user_profile,
+    update_profile,
+)
 from app.llm.client import llm_client
 from app.llm.prompts.profile import (
     SURVEY_ANALYZE_ANSWER_PROMPT,
@@ -31,15 +36,6 @@ from app.llm.prompts.profile import (
 logger = logging.getLogger(__name__)
 
 # ── 常量 ─────────────────────────────────────────────────────────
-_DIMENSIONS = (
-    "learning_style",
-    "best_time_slots",
-    "learning_rhythm",
-    "feedback_baseline",
-    "persistence",
-    "knowledge_retention",
-)
-_DEFAULT_LABEL = "未知"
 _TOTAL_ROUNDS = 4
 
 
@@ -78,7 +74,7 @@ def _format_single_dimension(dim_name: str, dim_data: dict) -> str:
     What: 从 {label, confidence, evidence} 结构中提取格式化的维度描述
     Why: format_chat_message 节点遍历 6 维度时的通用格式化逻辑
     """
-    label = dim_data.get("label", _DEFAULT_LABEL) if isinstance(dim_data, dict) else str(dim_data)
+    label = dim_data.get("label", DEFAULT_LABEL) if isinstance(dim_data, dict) else str(dim_data)
     confidence = dim_data.get("confidence", 0) if isinstance(dim_data, dict) else 0
     evidence_list = dim_data.get("evidence", []) if isinstance(dim_data, dict) else []
 
@@ -115,9 +111,9 @@ def _format_profile_snapshot(profile_data: dict) -> str:
         "knowledge_retention": "知识保留",
     }
     lines = ["当前画像维度状态："]
-    for dim in _DIMENSIONS:
+    for dim in PROFILE_DIMENSIONS:
         entry = profile_data.get(dim)
-        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", _DEFAULT_LABEL):
+        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", DEFAULT_LABEL):
             lines.append(f"  - {dim_names.get(dim, dim)}：{entry['label']} (置信度 {entry.get('confidence', 0)}%)")
         else:
             lines.append(f"  - {dim_names.get(dim, dim)}：未知")
@@ -150,9 +146,9 @@ async def format_chat_message(state: ProfileAgentState) -> dict[str, Any]:
     profile_data = state.get("profile") or {}
 
     has_profile = False
-    for dim in _DIMENSIONS:
+    for dim in PROFILE_DIMENSIONS:
         entry = profile_data.get(dim)
-        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", _DEFAULT_LABEL):
+        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", DEFAULT_LABEL):
             has_profile = True
             break
 
@@ -172,9 +168,9 @@ async def format_chat_message(state: ProfileAgentState) -> dict[str, Any]:
         }
 
     parts = ["📊 学习画像\n"]
-    for dim in _DIMENSIONS:
+    for dim in PROFILE_DIMENSIONS:
         entry = profile_data.get(dim)
-        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", _DEFAULT_LABEL):
+        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", DEFAULT_LABEL):
             parts.append(_format_single_dimension(dim, entry))
 
     parts.append(f"\n💡 如果某个维度判断不太准，可以告诉我，我会帮你校准。")
@@ -227,7 +223,7 @@ async def generate_survey_question(state: ProfileAgentState) -> dict[str, Any]:
         ])
         question = response.content.strip()
     except Exception as exc:
-        logger.error(f"[ProfileAgent] 生成摸底问题失败: {exc}")
+        logger.exception(f"[ProfileAgent] 生成摸底问题失败: {exc}")
         fallback_questions = [
             "你好！我是你的 AI 学习助手。能先跟我聊聊你之前的学习经历吗？比如学过什么，喜欢怎么学？",
             "你觉得自己学新东西快吗？是看一遍就会了，还是需要反复练习？",
@@ -278,11 +274,12 @@ async def analyze_survey_answer(state: ProfileAgentState) -> dict[str, Any]:
             {"role": "user", "content": "请分析上述回答。"},
         ])
         raw = response.content.strip()
+        # 移除可能的 markdown 代码块标记（更健壮的去尾处理）
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1]
-            raw = raw.rsplit("\n", 1)[0] if "\n" in raw else raw
             if raw.endswith("```"):
                 raw = raw[:-3]
+            raw = raw.strip()
         parsed = json.loads(raw)
         profile_updates = parsed.get("profile_updates", {})
         profile_complete = parsed.get("profile_complete", profile_complete)
@@ -302,8 +299,12 @@ async def analyze_survey_answer(state: ProfileAgentState) -> dict[str, Any]:
                         llm_confidence, old_confidence
                     )
                     dim_val.pop("confidence", None)
+    except json.JSONDecodeError as exc:
+        logger.warning(f"[ProfileAgent] LLM 返回非 JSON 格式: {exc}")
+        profile_updates = {}
+        followup_question = "谢谢你！还有什么其他学习习惯想分享的吗？"
     except Exception as exc:
-        logger.error(f"[ProfileAgent] 分析摸底回答失败: {exc}")
+        logger.exception(f"[ProfileAgent] 分析摸底回答失败: {exc}")
         profile_updates = {}
         followup_question = "谢谢你！还有什么其他学习习惯想分享的吗？"
 

@@ -152,7 +152,8 @@ async def profile_agent_node(state: AgentState) -> dict[str, Any]:
             session_id=state["session_id"],
         )
         return {"messages": result.get("messages", [])}
-    except Exception:
+    except Exception as exc:
+        logger.exception(f"[Orchestrator] 画像 Agent 节点执行失败: {exc}")
         return {
             "messages": [AIMessage(content="抱歉，暂时无法获取您的学习画像，请稍后再试。")]
         }

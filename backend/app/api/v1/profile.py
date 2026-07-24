@@ -94,7 +94,7 @@ async def get_profile(
         profile_data = await get_user_profile(str(current_user.id))
         return _build_profile_response(profile_data)
     except Exception as exc:
-        logger.error(f"[ProfileAPI] 查询画像失败: {exc}")
+        logger.exception(f"[ProfileAPI] 查询画像失败: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="画像查询失败，请稍后再试",
@@ -125,12 +125,10 @@ async def get_survey_next(
         )
 
     # 检查画像是否已完整 → 无需摸底
-    try:
-        profile_data = await get_user_profile(user_id)
-        if not profile_data.get("needs_initial_survey", True):
-            return SurveyNextResponse(complete=True)
-    except Exception:
-        pass
+    # get_user_profile 内部有完整容错（DB 异常返回默认画像），此处无需额外 try/except
+    profile_data = await get_user_profile(user_id)
+    if not profile_data.get("needs_initial_survey", True):
+        return SurveyNextResponse(complete=True)
 
     # 启动新摸底问答
     try:
@@ -150,7 +148,7 @@ async def get_survey_next(
             question=result["question"],
         )
     except Exception as exc:
-        logger.error(f"[ProfileAPI] 启动摸底失败: {exc}")
+        logger.exception(f"[ProfileAPI] 启动摸底失败: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="摸底问答启动失败，请稍后再试",
@@ -204,7 +202,7 @@ async def submit_survey_answer(
             next_question=result.get("next_question"),
         )
     except Exception as exc:
-        logger.error(f"[ProfileAPI] 处理摸底回答失败: {exc}")
+        logger.exception(f"[ProfileAPI] 处理摸底回答失败: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="摸底回答处理失败，请稍后再试",
@@ -229,7 +227,7 @@ async def calibrate_profile_dimension(
         )
         return CalibrateResponse(**result)
     except Exception as exc:
-        logger.error(f"[ProfileAPI] 校准维度失败: {exc}")
+        logger.exception(f"[ProfileAPI] 校准维度失败: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="维度校准失败，请稍后再试",
@@ -258,7 +256,7 @@ async def get_history(
         ]
         return ProfileHistoryResponse(history=items)
     except Exception as exc:
-        logger.error(f"[ProfileAPI] 查询画像历史失败: {exc}")
+        logger.exception(f"[ProfileAPI] 查询画像历史失败: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="画像历史查询失败，请稍后再试",

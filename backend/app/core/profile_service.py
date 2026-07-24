@@ -13,7 +13,7 @@ from collections import OrderedDict
 logger = logging.getLogger(__name__)
 
 # ── 常量 ─────────────────────────────────────────────────────────
-_DIMENSIONS = (
+PROFILE_DIMENSIONS = (
     "learning_style",
     "best_time_slots",
     "learning_rhythm",
@@ -21,9 +21,9 @@ _DIMENSIONS = (
     "persistence",
     "knowledge_retention",
 )
+DEFAULT_LABEL = "未知"
 _COMPLETENESS_THRESHOLD = 0.3
 _MAX_EVIDENCE = 10
-_DEFAULT_LABEL = "未知"
 
 
 # ── 内部辅助 ─────────────────────────────────────────────────────
@@ -46,12 +46,12 @@ def _ensure_dimension_struct(val):
     """
     if isinstance(val, dict):
         return {
-            "label": str(val.get("label", _DEFAULT_LABEL)),
+            "label": str(val.get("label", DEFAULT_LABEL)),
             "confidence": float(val.get("confidence", 0)),
             "evidence": list(val.get("evidence", [])),
         }
     return {
-        "label": str(val) if val else _DEFAULT_LABEL,
+        "label": str(val) if val else DEFAULT_LABEL,
         "confidence": 0.0,
         "evidence": [],
     }
@@ -67,13 +67,13 @@ def _calculate_completeness(profile_data: dict) -> float:
     if not profile_data:
         return 0.0
     valid = 0
-    for dim in _DIMENSIONS:
+    for dim in PROFILE_DIMENSIONS:
         entry = profile_data.get(dim)
-        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", _DEFAULT_LABEL):
+        if isinstance(entry, dict) and entry.get("label", "").strip() not in ("", DEFAULT_LABEL):
             valid += 1
-        elif isinstance(entry, str) and entry.strip() not in ("", _DEFAULT_LABEL):
+        elif isinstance(entry, str) and entry.strip() not in ("", DEFAULT_LABEL):
             valid += 1
-    return round(valid / len(_DIMENSIONS), 2)
+    return round(valid / len(PROFILE_DIMENSIONS), 2)
 
 
 def _merge_dimension(current: dict, updates: dict) -> tuple[dict, dict | None]:
@@ -93,7 +93,7 @@ def _merge_dimension(current: dict, updates: dict) -> tuple[dict, dict | None]:
     Returns:
         tuple[dict, dict | None]: (合并后的维度数据, changelog 条目或 None)
     """
-    old_label = current.get("label", _DEFAULT_LABEL)
+    old_label = current.get("label", DEFAULT_LABEL)
     old_confidence = float(current.get("confidence", 0))
 
     new_label = str(updates.get("label", old_label)) if updates.get("label") is not None else old_label
@@ -212,7 +212,7 @@ async def get_user_profile(user_id: str) -> dict:
 
             # 2. 规范化 6 维度 → 统一 {label, confidence, evidence}
             profile_dict = OrderedDict()
-            for dim in _DIMENSIONS:
+            for dim in PROFILE_DIMENSIONS:
                 profile_dict[dim] = _ensure_dimension_struct(raw_data.get(dim))
 
             # 3. 统计反馈次数
@@ -245,8 +245,8 @@ async def get_user_profile(user_id: str) -> dict:
 
     # 默认画像
     default_profile = OrderedDict()
-    for dim in _DIMENSIONS:
-        default_profile[dim] = {"label": _DEFAULT_LABEL, "confidence": 0.0, "evidence": []}
+    for dim in PROFILE_DIMENSIONS:
+        default_profile[dim] = {"label": DEFAULT_LABEL, "confidence": 0.0, "evidence": []}
     return {
         "profile": dict(default_profile),
         "total_feedback_count": 0,
@@ -298,7 +298,7 @@ async def update_profile(user_id: str, updates: dict) -> dict:
             changelog = []
             any_changed = False
 
-            for dim in _DIMENSIONS:
+            for dim in PROFILE_DIMENSIONS:
                 dim_updates = updates.get(dim)
                 if not dim_updates or not isinstance(dim_updates, dict):
                     continue
@@ -342,7 +342,7 @@ async def calibrate_dimension(user_id: str, dimension: str, comment: str) -> dic
 
     Args:
         user_id: 用户 ID
-        dimension: 维度名（_DIMENSIONS 之一）
+        dimension: 维度名（PROFILE_DIMENSIONS 之一）
         comment: 用户校准说明文本
 
     Returns:
@@ -351,14 +351,14 @@ async def calibrate_dimension(user_id: str, dimension: str, comment: str) -> dic
             new_label, new_confidence, message
         }
     """
-    if dimension not in _DIMENSIONS:
+    if dimension not in PROFILE_DIMENSIONS:
         return {
             "dimension": dimension,
-            "old_label": _DEFAULT_LABEL,
+            "old_label": DEFAULT_LABEL,
             "old_confidence": 0.0,
-            "new_label": _DEFAULT_LABEL,
+            "new_label": DEFAULT_LABEL,
             "new_confidence": 0.0,
-            "message": f"维度 '{dimension}' 不存在，有效维度：{', '.join(_DIMENSIONS)}",
+            "message": f"维度 '{dimension}' 不存在，有效维度：{', '.join(PROFILE_DIMENSIONS)}",
         }
 
     try:
@@ -412,9 +412,9 @@ async def calibrate_dimension(user_id: str, dimension: str, comment: str) -> dic
         )
         return {
             "dimension": dimension,
-            "old_label": _DEFAULT_LABEL,
+            "old_label": DEFAULT_LABEL,
             "old_confidence": 0.0,
-            "new_label": _DEFAULT_LABEL,
+            "new_label": DEFAULT_LABEL,
             "new_confidence": 0.0,
             "message": f"校准失败，请稍后再试。",
         }
@@ -463,12 +463,16 @@ async def get_profile_history(user_id: str, limit: int = 20) -> list[dict]:
                 changes = []
                 for dim, val in profile_updates.items():
                     if isinstance(val, dict):
-                        old_l = val.get("old_label", _DEFAULT_LABEL)
-                        new_l = val.get("new_label", val.get("label", _DEFAULT_LABEL))
+                        old_l = val.get("old_label")
+                        new_l = val.get("new_label", val.get("label", DEFAULT_LABEL))
                         old_c = val.get("old_confidence", 0)
                         new_c = val.get("new_confidence", val.get("confidence", 0))
-                        if old_l != new_l or abs(new_c - old_c) > 0.05:
-                            changes.append(f"{dim}: {old_l} → {new_l} ({new_c:+.0f}%)")
+                        # 仅当显式包含 old_label 时视为变更记录；否则视为原始维度值
+                        if old_l is not None:
+                            if old_l != new_l or abs(new_c - old_c) > 0.05:
+                                changes.append(f"{dim}: {old_l} → {new_l} ({new_c:+.0f}%)")
+                        else:
+                            changes.append(f"{dim}: {new_l} (置信度 {new_c})")
                     elif val:
                         changes.append(f"{dim}: → {val}")
 
