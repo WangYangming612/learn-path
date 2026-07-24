@@ -16,6 +16,14 @@ frontend/dist/
 # Runtime data
 data/
 
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
 # IDE
 .vscode/
 .idea/
