@@ -4,6 +4,7 @@ Profile Agent 测试共享 Fixtures
 提供：Mock 鉴权、Mock LLM、FastAPI TestClient
 """
 import json
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,11 +12,9 @@ from fastapi.testclient import TestClient
 
 # ── Mock User ─────────────────────────────────────────────────────
 
-class MockUser:
-    id = 999888
-    username = "test_user"
-    email = "test@example.com"
-    is_active = True
+def _random_user_id() -> int:
+    """每次调用生成 7 位唯一 user_id，避免测试间 DB 数据污染"""
+    return uuid.uuid4().int % 9_000_000 + 1_000_000
 
 
 # ── Mock AIMessage ────────────────────────────────────────────────
@@ -115,8 +114,14 @@ def mock_llm(monkeypatch):
 
 @pytest.fixture
 def client(monkeypatch):
-    """FastAPI TestClient（含鉴权绕过）"""
+    """FastAPI TestClient（含鉴权绕过 + 唯一 user_id 避免测试污染）"""
     from app.api.deps import get_current_user
+
+    class MockUser:
+        id = _random_user_id()
+        username = "test_user"
+        email = "test@example.com"
+        is_active = True
 
     async def _mock_auth():
         return MockUser()
