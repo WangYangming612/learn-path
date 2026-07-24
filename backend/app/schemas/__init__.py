@@ -15,6 +15,12 @@ from app.schemas.plan import (
     PlanRebuildRequest,
     PlanResponse,
 )
+from app.schemas.task import (
+    DailyTaskResponse,
+    GenerateTasksRequest,
+    GenerateTasksResponse,
+    TaskStatusUpdateRequest,
+)
 from app.schemas.user import UserCreate, UserLogin, UserResponse
 
 __all__ = [
@@ -26,6 +32,10 @@ __all__ = [
     "PlanNodeResponse",
     "PlanRebuildRequest",
     "PlanResponse",
+    "DailyTaskResponse",
+    "GenerateTasksRequest",
+    "GenerateTasksResponse",
+    "TaskStatusUpdateRequest",
     "UserCreate",
     "UserLogin",
     "UserResponse",

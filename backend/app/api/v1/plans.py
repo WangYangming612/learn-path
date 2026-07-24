@@ -29,7 +29,12 @@ async def create_plan(
     """创建学习计划"""
 
     draft = await generate_plan_draft(body.goal)
-    plan = await create_plan_from_draft(db=db, user_id=int(current_user.id), draft=draft)
+    plan = await create_plan_from_draft(
+        db=db,
+        user_id=int(current_user.id),
+        draft=draft,
+        priority=body.priority,
+    )
 
     result = await db.execute(
         select(KnowledgeNode).where(KnowledgeNode.plan_id == plan.id).order_by(KnowledgeNode.order_index.asc())
@@ -52,6 +57,7 @@ async def create_plan(
         title=plan.title,
         description=plan.description,
         status=plan.status,
+        priority=plan.priority,
         start_date=plan.start_date,
         end_date=plan.end_date,
         created_at=plan.created_at,

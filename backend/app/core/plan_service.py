@@ -89,6 +89,7 @@ async def create_plan_from_draft(
     db: AsyncSession,
     user_id: int,
     draft: PlanDraft,
+    priority: int = 2,
 ) -> Plan:
     """将 LLM 草稿保存为 Plan + KnowledgeNode"""
 
@@ -108,6 +109,7 @@ async def create_plan_from_draft(
         title=title,
         description=description,
         status="active",
+        priority=priority,
         start_date=start_date,
         end_date=end_date,
     )

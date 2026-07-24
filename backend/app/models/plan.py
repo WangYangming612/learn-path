@@ -63,6 +63,12 @@ class Plan(Base, TimestampMixin):
         nullable=False,
         comment="计划状态: draft / active / paused / completed",
     )
+    priority: Mapped[int] = mapped_column(
+        Integer,
+        default=2,
+        nullable=False,
+        comment="计划优先级: 1（高）/ 2（中）/ 3（低）",
+    )
 
     # ── 时间节点 ────────────────────────────────────────────
     start_date: Mapped[Optional[date]] = mapped_column(
