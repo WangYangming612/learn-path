@@ -18,6 +18,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.state import AgentState, create_initial_state
 from app.llm.client import llm_client
 from app.llm.prompts.orchestrator import build_intent_classification_messages
+from app.agents.profile_agent import run_profile_get_chat
 
 
 # ── 意图分类（关键词规则） ────────────────────────────────────────
@@ -132,19 +133,29 @@ def feedback_agent_node(state: AgentState) -> dict[str, Any]:
             )
         )]
     }
-def profile_agent_node(state: AgentState) -> dict[str, Any]:
+async def profile_agent_node(state: AgentState) -> dict[str, Any]:
     """
-    画像 Agent 占位节点
+    画像 Agent 节点
 
-    What: 占位节点，表示路由已到达画像 Agent
-    Why: 在 Step 6 实现 Profile Agent 之前用作占位，保证图结构完整
+    What: 调用 Profile Agent 加载用户画像并格式化为自然语言聊天消息
+    Why: Orchestrator 路由到 view_profile 意图时，通过此节点返回画像卡片
+
+    Args:
+        state: 当前 Agent 状态
 
     Returns:
-        dict: 包含一条通知消息和空 next（无后续路由）
+        dict: 包含 profile 聊天消息的 messages 列表
     """
-    return {
-        "messages": [AIMessage(content="[占位] 已到达画像 Agent，画像功能将在 Step 6 实现")]
-    }
+    try:
+        result = await run_profile_get_chat(
+            user_id=state["user_id"],
+            session_id=state["session_id"],
+        )
+        return {"messages": result.get("messages", [])}
+    except Exception:
+        return {
+            "messages": [AIMessage(content="抱歉，暂时无法获取您的学习画像，请稍后再试。")]
+        }
 
 
 def fallback_handler_node(state: AgentState) -> dict[str, Any]:
@@ -245,7 +256,7 @@ def create_orchestrator_graph() -> StateGraph:
     return graph.compile()
 
 
-def run_orchestrator(
+async def run_orchestrator(
     user_input: str,
     user_id: str = "test_user",
     session_id: str = "test_session",
@@ -274,8 +285,8 @@ def run_orchestrator(
         **kwargs,
     )
 
-    # 编译并运行图
+    # 编译并运行图（ainvoke 支持混合 sync/async 节点）
     graph = create_orchestrator_graph()
-    result = graph.invoke(initial_state)
+    result = await graph.ainvoke(initial_state)
 
     return result

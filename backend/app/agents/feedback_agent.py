@@ -29,6 +29,30 @@ from app.llm.prompts.feedback import (
 logger = logging.getLogger(__name__)
 
 
+# ── 辅助函数 ─────────────────────────────────────────────────────
+
+def _safe_profile(val: Any, default: str = "未知") -> str:
+    """
+    安全提取画像维度值（兼容新旧格式）
+
+    What: 从 ProfileService 返回的画像数据中提取可显示的字符串
+    Why: 旧格式为纯字符串 "理解偏慢型"，新格式为 {label, confidence, evidence}，
+         此函数统一两种格式的输出，确保 LLM prompt 不受影响
+
+    Args:
+        val: 画像维度值（str | dict | None）
+        default: 无法提取时的默认值
+
+    Returns:
+        str: 用于 LLM prompt 的维度字符串
+    """
+    if val is None:
+        return default
+    if isinstance(val, dict):
+        return str(val.get("label", val.get("value", default)))
+    return str(val) if val else default
+
+
 # ── 节点实现 ─────────────────────────────────────────────────────
 
 async def load_context(state: FeedbackAgentState) -> dict[str, Any]:
@@ -76,7 +100,10 @@ async def load_context(state: FeedbackAgentState) -> dict[str, Any]:
         learning_content = f"任务 #{task_id}"
 
     # 2. 获取用户画像（失败时自动使用默认画像）
-    profile = await get_user_profile(user_id)
+    profile_full = await get_user_profile(user_id)
+    profile = profile_full.get("profile", {})
+    profile["total_feedback_count"] = profile_full.get("total_feedback_count", 0)
+    profile["recent_feedback_history"] = []
 
     return {
         "learning_content": learning_content,
@@ -94,18 +121,13 @@ async def generate_question(state: FeedbackAgentState) -> dict[str, Any]:
     learning_content = state.get("learning_content", "未知内容")
     profile = state.get("profile_updates", {})
 
-    def _safe(val: Any, default: str = "未知") -> str:
-        if isinstance(val, dict):
-            return str(val.get("label", val.get("value", default)))
-        return str(val) if val else default
-
     prompt_args = {
-        "learning_style": _safe(profile.get("learning_style")),
-        "best_time_slots": _safe(profile.get("best_time_slots")),
-        "learning_rhythm": _safe(profile.get("learning_rhythm")),
-        "feedback_baseline": _safe(profile.get("feedback_baseline")),
-        "persistence": _safe(profile.get("persistence")),
-        "knowledge_retention": _safe(profile.get("knowledge_retention")),
+        "learning_style": _safe_profile(profile.get("learning_style")),
+        "best_time_slots": _safe_profile(profile.get("best_time_slots")),
+        "learning_rhythm": _safe_profile(profile.get("learning_rhythm")),
+        "feedback_baseline": _safe_profile(profile.get("feedback_baseline")),
+        "persistence": _safe_profile(profile.get("persistence")),
+        "knowledge_retention": _safe_profile(profile.get("knowledge_retention")),
         "total_feedback_count": profile.get("total_feedback_count", 0),
         "learning_content": learning_content,
         "recent_feedback_history": str(profile.get("recent_feedback_history", [])),
@@ -138,9 +160,9 @@ async def parse_signal(state: FeedbackAgentState) -> dict[str, Any]:
     profile = state.get("profile_updates", {})
 
     profile_summary = (
-        f"学习风格: {profile.get('learning_style', '未知')}, "
-        f"学习节奏: {profile.get('learning_rhythm', '未知')}, "
-        f"反馈基线: {profile.get('feedback_baseline', '未知')}"
+        f"学习风格: {_safe_profile(profile.get('learning_style'))}, "
+        f"学习节奏: {_safe_profile(profile.get('learning_rhythm'))}, "
+        f"反馈基线: {_safe_profile(profile.get('feedback_baseline'))}"
     )
 
     signal = "normal"
