@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.feedback import router as feedback_router
 
 # 创建 FastAPI 应用实例
 # What: FastAPI 应用对象，用于注册路由和中间件
@@ -36,6 +37,8 @@ app.add_middleware(
 # What: 将 auth 模块的路由注册到 FastAPI 应用
 # Why: 不注册则路由不可用，include_router 统一管理所有子路由
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(feedback_router, prefix="/api/v1")
+
 
 
 @app.get("/")
