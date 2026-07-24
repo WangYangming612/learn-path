@@ -1,4 +1,4 @@
-﻿"""
+"""
 Agent 状态定义模块
 
 What: 定义基于 LangGraph 的通用智能体状态基类 AgentState
@@ -74,3 +74,30 @@ def create_initial_state(
         "tools": tools or [],
         "next": next,
     }
+class FeedbackAgentState(AgentState):
+    """
+    反馈分析智能体状态
+
+    What: 扩展 AgentState，增加反馈分析所需的专有字段
+    Why: 承载 Feedback Agent 子图中各节点间的数据流转
+
+    Attributes:
+        feedback_signal: 解析后的信号: too_easy / normal / stuck / need_practice
+        confidence_delta: 掌握度变化量 (-1.0 ~ 1.0)
+        replan_triggered: 是否触发重规划
+        profile_updates: 待更新的画像维度
+        task_id: 关联的每日任务 ID
+        learning_content: 本次学习内容
+        feedback_question: 生成的追问
+        user_reply: 用户的回复
+        system_response: 系统响应
+    """
+    feedback_signal: str | None
+    confidence_delta: float | None
+    replan_triggered: bool
+    profile_updates: dict | None
+    task_id: str | None
+    learning_content: str | None
+    feedback_question: str | None
+    user_reply: str | None
+    system_response: str | None

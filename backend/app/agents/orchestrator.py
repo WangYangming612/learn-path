@@ -1,4 +1,4 @@
-﻿"""
+"""
 Orchestrator 编排智能体模块
 
 What: 实现系统入口智能体，负责意图分类和子图路由
@@ -112,19 +112,26 @@ def plan_agent_node(state: AgentState) -> dict[str, Any]:
 
 def feedback_agent_node(state: AgentState) -> dict[str, Any]:
     """
-    反馈 Agent 占位节点
+    反馈 Agent 节点
 
-    What: 占位节点，表示路由已到达反馈 Agent
-    Why: 在 Step 9 实现 Feedback Agent 之前用作占位，保证图结构完整
+    What: 路由到 Feedback Agent，返回引导消息让用户提交 task_id
+    Why: Feedback Agent 通过 REST API 交互（SSE 流式追问），
+         Orchestrator 在此提示用户使用反馈端点
 
     Returns:
-        dict: 包含一条通知消息和空 next（无后续路由）
+        dict: 包含 Feedback Agent 入口提示消息
     """
     return {
-        "messages": [AIMessage(content="[占位] 已到达反馈 Agent，反馈功能将在 Step 9 实现")]
+        "messages": [AIMessage(
+            content=(
+                "反馈功能已就绪！请完成学习任务后，通过以下方式提交反馈：\n\n"
+                "1\u20e3 调用 `POST /api/v1/feedback/start` 并传入 task_id\n"
+                "2\u20e3 系统会生成个性化追问（SSE 流式返回）\n"
+                "3\u20e3 回复后再调用 `POST /api/v1/feedback/reply` 提交回复\n\n"
+                "你也可以直接在对话框里告诉我你的学习感受，我来帮你分析。"
+            )
+        )]
     }
-
-
 def profile_agent_node(state: AgentState) -> dict[str, Any]:
     """
     画像 Agent 占位节点
