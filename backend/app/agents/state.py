@@ -105,3 +105,80 @@ class FeedbackAgentState(AgentState):
     feedback_question: str | None
     user_reply: str | None
     system_response: str | None
+
+
+class ProfileDimension(TypedDict):
+    """
+    画像单维度数据结构
+
+    What: 定义单个画像维度的 label、confidence 和 evidence
+    Why: ProfileData 和 ProfileAgentState 依赖此类型，
+         确保画像 6 维度结构统一、便于序列化和 LLM 解析
+
+    Attributes:
+        label: 维度标签（如 "理解偏慢但记忆牢固型"）
+        confidence: 置信度，范围 0-100
+        evidence: 证据列表，每条是触发该判断的反馈记录摘要
+    """
+    label: str
+    confidence: float
+    evidence: list[str]
+
+
+class ProfileData(TypedDict):
+    """
+    完整画像数据（6 维度）
+
+    What: 聚合所有画像维度的结构化快照
+    Why: 作为 ProfileAgentState.profile 的承载类型，
+         供 Plan / Schedule / Feedback Agent 按维度读取画像
+
+    Attributes:
+        learning_style: 学习风格
+        best_time_slots: 最佳学习时段
+        learning_rhythm: 学习节奏偏好
+        feedback_baseline: 反馈校准基线
+        persistence: 持续力特征
+        knowledge_retention: 知识保留特征
+    """
+    learning_style: ProfileDimension
+    best_time_slots: ProfileDimension
+    learning_rhythm: ProfileDimension
+    feedback_baseline: ProfileDimension
+    persistence: ProfileDimension
+    knowledge_retention: ProfileDimension
+
+
+class ProfileAgentState(AgentState):
+    """
+    画像智能体状态
+
+    What: 扩展 AgentState，增加画像查询/构建/更新/校准所需字段
+    Why: 承载 Profile Agent 子图中各节点间的数据流转
+
+    Attributes:
+        action: 操作类型: initial_survey / update_profile / get_profile / calibrate_dimension
+        survey_answers: 用户对摸底问题的回答历史（initial_survey 使用）
+        feedback_signal: 反馈信号，来自 Feedback Agent（update_profile 使用）
+        confidence_delta: 掌握度变化量 -1.0 ~ 1.0（update_profile 使用）
+        source_session: 来源反馈会话 ID（update_profile 使用）
+        target_dimension: 用户点踩的维度名（calibrate_dimension 使用）
+        user_comment: 用户校准说明（calibrate_dimension 使用）
+        profile: 当前画像快照
+        survey_question: 摸底追问问题
+        calibration_result: 校准结果说明
+        profile_changed: 画像是否有变更
+        profile_changelog: 变更记录列表
+    """
+    action: str
+    survey_answers: list[str] | None
+    feedback_signal: str | None
+    confidence_delta: float | None
+    source_session: str | None
+    target_dimension: str | None
+    user_comment: str | None
+    profile: ProfileData | None
+    survey_question: str | None
+    calibration_result: str | None
+    profile_changed: bool | None
+    profile_changelog: list[dict] | None
