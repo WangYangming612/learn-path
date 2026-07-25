@@ -1,52 +1,126 @@
-import React from "react";
-import { Layout, Typography, Space } from "antd";
-
-const { Content } = Layout;
-const { Title, Paragraph } = Typography;
-
 /**
- * 根组件 — 欢迎页
- *
- * What: 应用的入口组件，渲染欢迎页面
- * Why: 作为 Step 1 骨架验证，展示核心品牌信息和项目口号
- *      后续步骤将在此基础上升级为路由系统
+ * 根组件 — 路由 + 主题 + 会话初始化
  */
+
+import React, { useEffect } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { App as AntApp, ConfigProvider, Spin } from "antd";
+import zhCN from "antd/locale/zh_CN";
+import AppLayout from "@/components/Layout";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import { useAuth } from "@/hooks/useAuth";
+import DashboardPage from "@/pages/Dashboard";
+import LoginPage from "@/pages/Login";
+import RegisterPage from "@/pages/Register";
+
+const theme = {
+  token: {
+    colorPrimary: "#0f766e",
+    colorInfo: "#0e7490",
+    colorSuccess: "#059669",
+    colorWarning: "#d97706",
+    colorError: "#dc2626",
+    borderRadius: 12,
+    fontFamily:
+      '"Plus Jakarta Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif',
+    controlHeightLG: 44,
+  },
+  components: {
+    Button: {
+      primaryShadow: "0 8px 20px rgba(15, 118, 110, 0.25)",
+      fontWeight: 600,
+    },
+    Input: {
+      activeBorderColor: "#0f766e",
+      hoverBorderColor: "#14b8a6",
+    },
+    Menu: {
+      itemBorderRadius: 10,
+      itemMarginInline: 10,
+      itemHeight: 44,
+    },
+  },
+};
+
+/** 已登录访问登录/注册时跳回 Dashboard */
+const GuestOnly: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isAuthenticated, initialized } = useAuth();
+
+  if (!initialized) {
+    return (
+      <div className="app-boot-screen">
+        <Spin size="large" tip="加载中…" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const AppRoutes: React.FC = () => {
+  const { initialize, initialized } = useAuth();
+
+  useEffect(() => {
+    void initialize();
+  }, [initialize]);
+
+  if (!initialized) {
+    return (
+      <div className="app-boot-screen">
+        <Spin size="large" tip="正在启动 LearnPath…" />
+      </div>
+    );
+  }
+
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+      <Route
+        path="/login"
+        element={
+          <GuestOnly>
+            <LoginPage />
+          </GuestOnly>
+        }
+      />
+      <Route
+        path="/register"
+        element={
+          <GuestOnly>
+            <RegisterPage />
+          </GuestOnly>
+        }
+      />
+
+      <Route
+        element={
+          <ProtectedRoute>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/dashboard" element={<DashboardPage />} />
+      </Route>
+
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+};
+
 const App: React.FC = () => {
   return (
-    <Layout
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-      }}
-    >
-      <Content style={{ textAlign: "center", padding: "0 24px" }}>
-        <Space direction="vertical" size="large">
-          <Title
-            level={1}
-            style={{
-              color: "#fff",
-              fontSize: "2.8rem",
-              margin: 0,
-              letterSpacing: "2px",
-            }}
-          >
-            LearnPath - 个性化学习路径系统
-          </Title>
-          <Paragraph
-            style={{
-              color: "rgba(255, 255, 255, 0.85)",
-              fontSize: "1.2rem",
-              margin: 0,
-            }}
-          >
-            你只管学，剩下的交给我
-          </Paragraph>
-        </Space>
-      </Content>
-    </Layout>
+    <ConfigProvider locale={zhCN} theme={theme}>
+      <AntApp>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </AntApp>
+    </ConfigProvider>
   );
 };
 
