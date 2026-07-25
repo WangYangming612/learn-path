@@ -35,6 +35,8 @@ class AgentState(TypedDict):
     agent_type: str
     tools: list
     next: str
+    parsed_goal: dict | None
+    plan_result: dict | None
 
 
 def create_initial_state(
@@ -61,6 +63,8 @@ def create_initial_state(
         messages: 可选，初始消息列表，默认空列表
         tools: 可选，工具列表，默认空列表
         next: 可选，下一步路由，默认空字符串
+        parsed_goal: 可选，解析后的学习目标
+        plan_result: 可选，Plan Agent 的最终结果
 
     Returns:
         AgentState: 初始化后的状态字典

@@ -65,6 +65,9 @@ class KnowledgeNode(Base, TimestampMixin):
     difficulty: Mapped[int] = mapped_column(
         Integer, default=1, comment="难度等级 (1-5)"
     )
+    estimated_minutes: Mapped[int] = mapped_column(
+        Integer, default=0, comment="预计学习时长（分钟）"
+    )
     mastery_level: Mapped[float] = mapped_column(
         Float, default=0.0, comment="用户当前掌握程度 (0.0 ~ 1.0)"
     )

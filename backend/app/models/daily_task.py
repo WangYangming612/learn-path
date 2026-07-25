@@ -6,10 +6,10 @@ Why: 用户每日视图展示今日任务清单，Feedback Agent 在完成任务
 How: 双向关联 User / Plan / KnowledgeNode，scheduled_date 用于日期筛选
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -71,6 +71,15 @@ class DailyTask(Base, TimestampMixin):
     )
     duration_minutes: Mapped[int] = mapped_column(
         Integer, default=30, comment="预计耗时（分钟）"
+    )
+    start_time: Mapped[Optional[time]] = mapped_column(
+        Time, default=None, comment="任务开始时间"
+    )
+    end_time: Mapped[Optional[time]] = mapped_column(
+        Time, default=None, comment="任务结束时间"
+    )
+    guide_content: Mapped[Optional[str]] = mapped_column(
+        Text, default=None, comment="任务学习指引"
     )
 
     # ── 状态管理 ────────────────────────────────────────────

@@ -15,6 +15,7 @@ from typing import Any, Literal
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.plan_agent import plan_agent_node
 from app.agents.state import AgentState, create_initial_state
 from app.llm.client import llm_client
 from app.llm.prompts.orchestrator import build_intent_classification_messages
@@ -94,21 +95,6 @@ def intent_classifier_node(state: AgentState) -> dict[str, Any]:
         # LLM 调用失败 → 使用关键词 fallback
         intent = _classify_by_keywords(last_user_msg)
         return {"next": intent}
-
-
-def plan_agent_node(state: AgentState) -> dict[str, Any]:
-    """
-    计划 Agent 占位节点
-
-    What: 占位节点，表示路由已到达计划 Agent
-    Why: 在 Step 7 实现 Plan Agent 之前用作占位，保证图结构完整
-
-    Returns:
-        dict: 包含一条通知消息和空 next（无后续路由）
-    """
-    return {
-        "messages": [AIMessage(content="[占位] 已到达计划 Agent，计划创建功能将在 Step 7 实现")]
-    }
 
 
 def feedback_agent_node(state: AgentState) -> dict[str, Any]:
