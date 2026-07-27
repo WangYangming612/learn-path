@@ -9,7 +9,7 @@ How: 双向关联 User / Plan / KnowledgeNode，scheduled_date 用于日期筛�
 from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, Time
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text, Time
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -91,6 +91,13 @@ class DailyTask(Base, TimestampMixin):
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, default=None, comment="实际完成时间"
+    )
+    # ── 反馈闭环字段 ──
+    feedback_signal: Mapped[Optional[str]] = mapped_column(
+        String(20), default=None, comment="用户反馈信号: too_easy/normal/stuck/need_practice"
+    )
+    feedback_confidence_delta: Mapped[Optional[float]] = mapped_column(
+        Float, default=None, comment="用户反馈导致的掌握度变化"
     )
 
     # ── 关联关系 ────────────────────────────────────────────
