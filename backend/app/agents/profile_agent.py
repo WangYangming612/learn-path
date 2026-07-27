@@ -5,21 +5,28 @@ What: 实现画像查询展示和摸底问答，包含 profile_get 和 profile_s
 Why: 用户聊天询问画像时返回自然语言卡片；新用户通过摸底问答建立初始画像
 
 架构说明：
-  子图 A — profile_get_graph（无 LLM，纯查询+格式化）：
-      START → load_profile → format_chat_message → END
+  子图 A — profile_get_graph（含审查 loop）：
+      START → load_profile → format_chat_message → profile_review
+          ├─ pass → END
+          └─ fail (未达上限) → retry format_chat_message
 
-  子图 B — profile_survey_graph（LLM 驱动，拆分为两段供外部 API 调用）：
-      - run_survey_first:            generate_survey_question
-      - run_survey_next:             analyze_survey_answer
+  子图 B — profile_survey_graph（LLM 驱动，含审查 loop）：
+      START → generate_survey_question → profile_review
+          ├─ pass → END
+          └─ fail (未达上限) → retry generate_survey_question
+
+  子图 C — profile_survey_half2_graph（暂不接入 loop）：
+      START → analyze_survey_answer → END
 """
 
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.review import get_reviewer
 from app.agents.state import ProfileAgentState
 from app.core.profile_service import (
     DEFAULT_LABEL,
@@ -321,25 +328,170 @@ async def analyze_survey_answer(state: ProfileAgentState) -> dict[str, Any]:
     }
 
 
+# ── 审查回路 ─────────────────────────────────────────────────────
+
+async def profile_reviewer(raw_output: dict, user_input: str, context: dict) -> dict:
+    """
+    Profile Agent 输出质量审查器
+
+    What: 审查 profile_agent 各节点输出的内容质量
+    Why: 作为 Agent Loop 中的审查环节，确保画像查询和摸底问答输出符合标准
+
+    Returns:
+        dict: {"verdict": "pass"|"fail", "issues": [...], "suggestions": [...]}
+    """
+    issues = []
+    suggestions = []
+
+    if "messages" in raw_output:
+        messages = raw_output.get("messages", [])
+        if not messages:
+            issues.append("输出 messages 为空")
+            suggestions.append("确保节点返回有效的 AIMessage 列表")
+        else:
+            for msg in messages:
+                content = ""
+                if hasattr(msg, "content"):
+                    content = msg.content
+                elif isinstance(msg, dict):
+                    content = msg.get("content", "")
+                if not content or len(content.strip()) < 5:
+                    issues.append("回复消息内容为空或过短")
+                    suggestions.append("生成更详细的自然语言描述")
+
+    if "survey_question" in raw_output:
+        question = raw_output.get("survey_question", "")
+        if not question or not question.strip():
+            issues.append("摸底问题为空")
+            suggestions.append("重新调用 LLM 生成摸底问题")
+        elif len(question.strip()) < 5:
+            issues.append("摸底问题过短（<5 字符）")
+            suggestions.append("生成更自然、更详细的摸底问题")
+
+    verdict = "fail" if issues else "pass"
+    return {"verdict": verdict, "issues": issues, "suggestions": suggestions}
+
+
+async def profile_review_node(state: ProfileAgentState) -> dict[str, Any]:
+    """
+    Profile Agent 审查网关节点
+
+    What: 收集当前子图执行输出，调用注册的审查器进行质量检查，
+          根据结果决定放行或触发重试
+    Why: 实现 Agent Loop 中的审查环节，确保 profile_agent 输出质量
+    """
+    raw_output = {}
+    msgs = state.get("messages", [])
+    if msgs:
+        raw_output["messages"] = [msgs[-1]]
+    if state.get("survey_question"):
+        raw_output["survey_question"] = state["survey_question"]
+
+    user_input = ""
+    for msg in reversed(state.get("messages", [])):
+        if hasattr(msg, "content") and getattr(msg, "type", "") == "human":
+            user_input = msg.content
+            break
+
+    review_attempts = state.get("review_attempts", 0) + 1
+    review_max = state.get("review_max_attempts", 3)
+    review_results = list(state.get("review_results", []))
+
+    reviewer = get_reviewer("profile_agent")
+    if reviewer:
+        try:
+            result = await reviewer(
+                raw_output, user_input,
+                {"agent_type": state.get("agent_type", "profile")},
+            )
+        except Exception as exc:
+            logger.warning(f"[ProfileAgent] 审查器执行异常: {exc}")
+            result = {"verdict": "pass", "issues": [f"审查器异常: {exc!s}"]}
+    else:
+        result = {"verdict": "pass", "issues": ["审查器未注册，默认放行"]}
+
+    review_results.append({
+        "attempt": review_attempts,
+        "verdict": result.get("verdict", "pass"),
+        "issues": result.get("issues", []),
+        "suggestions": result.get("suggestions", []),
+    })
+
+    verdict = result.get("verdict", "pass")
+    is_final = verdict == "pass" or review_attempts >= review_max
+
+    if is_final and verdict != "pass":
+        logger.info(
+            f"[ProfileAgent] 审查未通过但已达重试上限 "
+            f"(attempts={review_attempts}/{review_max}, "
+            f"issues={result.get('issues', [])})"
+        )
+
+    return {
+        "raw_agent_output": raw_output,
+        "review_attempts": review_attempts,
+        "review_results": review_results,
+        "review_verdict": "pass" if is_final else "fail",
+    }
+
+
+def review_router(state: ProfileAgentState) -> Literal["retry", "end"]:
+    """
+    审查结果条件路由
+
+    What: 根据 review_verdict 决定下一步走向
+    Why: 作为条件边的路由函数，pass → END, fail → retry
+    """
+    if state.get("review_verdict", "") == "pass":
+        return "end"
+    return "retry"
+
+
 # ── 图构建 ──────────────────────────────────────────────────────
 
 def create_profile_get_graph() -> StateGraph:
-    """创建画像查询子图：load_profile → format_chat_message"""
+    """
+    创建画像查询子图：load_profile → format_chat_message → review ⇄ loop
+
+    Loop 流程:
+        load_profile → format_chat_message → profile_review
+            ├─ pass → END
+            └─ fail (未达上限) → retry format_chat_message
+    """
     graph = StateGraph(ProfileAgentState)
     graph.add_node("load_profile", load_profile)
     graph.add_node("format_chat_message", format_chat_message)
+    graph.add_node("profile_review", profile_review_node)
     graph.add_edge(START, "load_profile")
     graph.add_edge("load_profile", "format_chat_message")
-    graph.add_edge("format_chat_message", END)
+    graph.add_edge("format_chat_message", "profile_review")
+    graph.add_conditional_edges(
+        "profile_review",
+        review_router,
+        {"retry": "format_chat_message", "end": END},
+    )
     return graph.compile()
 
 
 def create_profile_survey_graph() -> StateGraph:
-    """创建摸底问答前半段子图：generate_survey_question"""
+    """
+    创建摸底问答前半段子图：generate_survey_question → review ⇄ loop
+
+    Loop 流程:
+        generate_survey_question → profile_review
+            ├─ pass → END
+            └─ fail (未达上限) → retry generate_survey_question
+    """
     graph = StateGraph(ProfileAgentState)
     graph.add_node("generate_survey_question", generate_survey_question)
+    graph.add_node("profile_review", profile_review_node)
     graph.add_edge(START, "generate_survey_question")
-    graph.add_edge("generate_survey_question", END)
+    graph.add_edge("generate_survey_question", "profile_review")
+    graph.add_conditional_edges(
+        "profile_review",
+        review_router,
+        {"retry": "generate_survey_question", "end": END},
+    )
     return graph.compile()
 
 
@@ -510,3 +662,9 @@ async def run_survey_next(
         "needs_followup": not profile_complete,
         "next_question": followup_question if not profile_complete else None,
     }
+
+
+# ── 审查器注册 ──────────────────────────────────────────────────
+from app.agents.review import register_reviewer as _reg
+
+_reg("profile_agent", profile_reviewer)
