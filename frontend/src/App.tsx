@@ -14,6 +14,7 @@ import LoginPage from "@/pages/Login";
 import RegisterPage from "@/pages/Register";
 import PlansPage from "@/pages/Plans";
 import PlanDetailPage from "@/pages/PlanDetail";
+import DailyViewPage from "@/pages/DailyView";
 
 const theme = {
   token: {
@@ -92,6 +93,7 @@ const AppRoutes: React.FC = () => {
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/plans" element={<PlansPage />} />
         <Route path="/plans/:id" element={<PlanDetailPage />} />
+        <Route path="/daily" element={<DailyViewPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

@@ -322,3 +322,115 @@ export function toPlanSummary(plan: PlanDetail): PlanSummary {
     goal: plan.goal,
   };
 }
+
+/* ========== 每日任务模块 ========== */
+
+export type TaskStatus = "pending" | "completed" | "skipped";
+
+export interface DailyTask {
+  id: string;
+  plan_id: string;
+  knowledge_node_id: string | null;
+  plan_title: string | null;
+  title: string;
+  description: string | null;
+  scheduled_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  duration_minutes: number;
+  guide_content: string | null;
+  status: TaskStatus;
+  completed_at: string | null;
+  /** 前端本地排序序号（后端暂无 reorder API） */
+  sort_order: number;
+}
+
+export interface BackendDailyTaskRaw {
+  id: number | string;
+  plan_id: number | string;
+  knowledge_node_id?: number | string | null;
+  plan_title?: string | null;
+  title: string;
+  description?: string | null;
+  scheduled_date: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  duration_minutes: number;
+  guide_content?: string | null;
+  status: TaskStatus | string;
+  completed_at?: string | null;
+}
+
+export interface GenerateTasksRequest {
+  scheduled_date?: string;
+  daily_budget?: number;
+}
+
+export interface GenerateTasksResponse {
+  scheduled_date: string;
+  tasks: DailyTask[];
+}
+
+function formatTimeField(value?: string | null): string | null {
+  if (!value) return null;
+  // FastAPI time 可能是 "HH:MM:SS" 或 "HH:MM:SS.micro"
+  return value.slice(0, 5);
+}
+
+export function normalizeDailyTask(
+  raw: BackendDailyTaskRaw,
+  sortOrder = 0
+): DailyTask {
+  return {
+    id: String(raw.id),
+    plan_id: String(raw.plan_id),
+    knowledge_node_id:
+      raw.knowledge_node_id != null ? String(raw.knowledge_node_id) : null,
+    plan_title: raw.plan_title ?? null,
+    title: raw.title,
+    description: raw.description ?? null,
+    scheduled_date: String(raw.scheduled_date).slice(0, 10),
+    start_time: formatTimeField(raw.start_time),
+    end_time: formatTimeField(raw.end_time),
+    duration_minutes: raw.duration_minutes,
+    guide_content: raw.guide_content ?? null,
+    status: (raw.status as TaskStatus) || "pending",
+    completed_at: raw.completed_at ?? null,
+    sort_order: sortOrder,
+  };
+}
+
+/* ========== 反馈模块 ========== */
+
+export type FeedbackSignal =
+  | "too_easy"
+  | "normal"
+  | "stuck"
+  | "need_practice"
+  | string;
+
+/** 对齐后端 POST /feedback/start 的 SSE 事件 */
+export type FeedbackStreamEvent =
+  | { type: "question_chunk"; content: string }
+  | { type: "question_done"; session_id: string }
+  | { type: "error"; content: string };
+
+export interface FeedbackReplyRequest {
+  session_id: string;
+  reply: string;
+}
+
+export interface FeedbackReplyResponse {
+  signal: FeedbackSignal;
+  confidence_delta: number;
+  replan_triggered: boolean;
+  profile_updates: Record<string, unknown>;
+  system_response: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: "assistant" | "user" | "system";
+  content: string;
+  streaming?: boolean;
+}

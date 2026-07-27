@@ -43,7 +43,7 @@ const AppLayout: React.FC = () => {
   const menuItems: MenuProps["items"] = [
     { key: "dashboard", icon: <DashboardOutlined />, label: <Link to="/dashboard">工作台</Link> },
     { key: "plans", icon: <BookOutlined />, label: <Link to="/plans">学习计划</Link> },
-    { key: "daily", icon: <CalendarOutlined />, label: <Tooltip title="Step 11 开放"><span className="nav-soon">今日学习</span></Tooltip>, disabled: true },
+    { key: "daily", icon: <CalendarOutlined />, label: <Link to="/daily">今日学习</Link> },
     { key: "profile", icon: <UserOutlined />, label: <Tooltip title="Step 12 开放"><span className="nav-soon">学习画像</span></Tooltip>, disabled: true },
   ];
 
