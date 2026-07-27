@@ -12,6 +12,8 @@ import { useAuth } from "@/hooks/useAuth";
 import DashboardPage from "@/pages/Dashboard";
 import LoginPage from "@/pages/Login";
 import RegisterPage from "@/pages/Register";
+import PlansPage from "@/pages/Plans";
+import PlanDetailPage from "@/pages/PlanDetail";
 
 const theme = {
   token: {
@@ -42,7 +44,6 @@ const theme = {
   },
 };
 
-/** 已登录访问登录/注册时跳回 Dashboard */
 const GuestOnly: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, initialized } = useAuth();
 
@@ -79,24 +80,8 @@ const AppRoutes: React.FC = () => {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-      <Route
-        path="/login"
-        element={
-          <GuestOnly>
-            <LoginPage />
-          </GuestOnly>
-        }
-      />
-      <Route
-        path="/register"
-        element={
-          <GuestOnly>
-            <RegisterPage />
-          </GuestOnly>
-        }
-      />
-
+      <Route path="/login" element={<GuestOnly><LoginPage /></GuestOnly>} />
+      <Route path="/register" element={<GuestOnly><RegisterPage /></GuestOnly>} />
       <Route
         element={
           <ProtectedRoute>
@@ -105,8 +90,9 @@ const AppRoutes: React.FC = () => {
         }
       >
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/plans" element={<PlansPage />} />
+        <Route path="/plans/:id" element={<PlanDetailPage />} />
       </Route>
-
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

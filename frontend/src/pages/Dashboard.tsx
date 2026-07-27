@@ -1,8 +1,9 @@
 /**
- * Dashboard 占位页 — Step 4 欢迎与功能预览
+ * Dashboard 工作台 — 欢迎与功能预览
  */
 
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import { Button, Col, Row, Tag, Typography } from "antd";
 import {
   BookOutlined,
@@ -22,7 +23,7 @@ const FEATURES = [
     icon: <BookOutlined />,
     title: "学习计划",
     desc: "用自然语言描述目标，AI 生成知识 DAG 与可完成性评估。",
-    step: "Step 10",
+    step: "已开放",
     tone: "teal",
   },
   {
@@ -30,7 +31,7 @@ const FEATURES = [
     icon: <CalendarOutlined />,
     title: "每日排期",
     desc: "按画像与优先级自动编排今日任务，支持拖拽微调。",
-    step: "Step 11",
+    step: "即将上线",
     tone: "cyan",
   },
   {
@@ -38,7 +39,7 @@ const FEATURES = [
     icon: <ThunderboltOutlined />,
     title: "反馈闭环",
     desc: "对话式反馈驱动路径调整，SSE 实时呈现 Agent 回应。",
-    step: "Step 11",
+    step: "即将上线",
     tone: "amber",
   },
   {
@@ -46,13 +47,14 @@ const FEATURES = [
     icon: <UserOutlined />,
     title: "学习画像",
     desc: "六维雷达图刻画风格、节奏与持续力，置信度随学习生长。",
-    step: "Step 12",
+    step: "即将上线",
     tone: "slate",
   },
 ] as const;
 
 const DashboardPage: React.FC = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const hour = new Date().getHours();
   const greeting =
     hour < 6
@@ -74,16 +76,18 @@ const DashboardPage: React.FC = () => {
             {greeting}，{user?.username}
           </Title>
           <Paragraph className="dash-hero__lead">
-            欢迎来到 LearnPath。前端骨架已就绪——登录鉴权、布局导航与会话恢复均已打通。
-            后续步骤将在此接入计划、每日视图与画像能力。
+            欢迎来到 LearnPath。用一句话描述学习目标，即可生成知识路径与可完成性评估。
+            从创建第一个计划开始，把目标落成可执行的路径。
           </Paragraph>
           <div className="dash-hero__cta">
-            <Button type="primary" size="large" icon={<RocketOutlined />} disabled>
+            <Button
+              type="primary"
+              size="large"
+              icon={<RocketOutlined />}
+              onClick={() => navigate("/plans?create=1")}
+            >
               创建第一个计划
             </Button>
-            <Text type="secondary" className="dash-hero__hint">
-              计划创建将在 Step 10 开放
-            </Text>
           </div>
         </div>
 
@@ -104,9 +108,9 @@ const DashboardPage: React.FC = () => {
       <section className="dash-section">
         <div className="dash-section__head">
           <Title level={4} style={{ margin: 0 }}>
-            即将上线的能力
+            能力一览
           </Title>
-          <Text type="secondary">当前为占位预览，不影响后续页面接入</Text>
+          <Text type="secondary">学习计划已开放，其余能力陆续接入</Text>
         </div>
 
         <Row gutter={[20, 20]}>

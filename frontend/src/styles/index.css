@@ -713,6 +713,89 @@ button {
   padding-top: 4px;
 }
 
+/* ---------- Plans ---------- */
+
+.page-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.page-hero__tag {
+  border: none !important;
+  background: rgba(15, 118, 110, 0.1) !important;
+  color: var(--lp-teal-800) !important;
+  font-weight: 600;
+}
+
+.panel-card,
+.stat-card {
+  border-radius: 18px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.05);
+}
+
+.plan-wizard__steps {
+  margin-bottom: 20px;
+}
+
+.plan-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.plan-detail-page {
+  display: grid;
+  gap: 16px;
+}
+
+.plan-detail__meta {
+  display: grid;
+  gap: 16px;
+}
+
+.path-graph {
+  height: 540px;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--lp-line);
+}
+
+.path-graph__empty {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  color: var(--lp-muted);
+}
+
+.path-node {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.path-node__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.path-node__title {
+  font-weight: 700;
+  color: var(--lp-ink);
+  line-height: 1.35;
+}
+
+.path-node__desc {
+  color: var(--lp-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 960px) {
