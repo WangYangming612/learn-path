@@ -259,6 +259,38 @@ async def reply_feedback(
             system_response=system_response,
         )
 
+        # 5b. Intervention Agent 自动触发
+        if replan_triggered and signal in ("stuck", "need_practice"):
+            _plan_id = ""
+            try:
+                from app.models.daily_task import DailyTask
+                from app.db.session import get_db as _get_db
+
+                async for _db in _get_db():
+                    _task = await _db.get(DailyTask, int(task_id))
+                    if _task and _task.plan_id:
+                        _plan_id = str(_task.plan_id)
+                    break
+            except Exception as _exc:
+                logger.warning(f"[FeedbackAPI] 获取 plan_id 失败 ({_exc})，跳过 Intervention 触发")
+
+            if _plan_id:
+                try:
+                    from app.agents.intervention_agent import run_intervention
+
+                    await run_intervention(
+                        user_id=str(current_user.id),
+                        plan_id=_plan_id,
+                        signal=signal,
+                        confidence_delta=confidence_delta,
+                    )
+                    logger.info(
+                        f"[FeedbackAPI] Intervention Agent 已触发: "
+                        f"user={current_user.id}, plan={_plan_id}, signal={signal}"
+                    )
+                except Exception as _exc:
+                    logger.warning(f"[FeedbackAPI] Intervention Agent 触发失败: {_exc}")
+
         # 6. 清理已使用的 session
         _sessions.pop(session_id, None)
 

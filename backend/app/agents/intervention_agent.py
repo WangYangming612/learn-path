@@ -298,6 +298,8 @@ _VALID_ACTION_TYPES = frozenset({
     "add_practice",
     "adjust_rhythm",
     "suggest_review",
+    "adjust_minutes",
+    "schedule_review",
 })
 
 
@@ -349,11 +351,11 @@ async def intervention_reviewer(raw_output: dict, user_input: str, context: dict
         suggestions.append("生成简洁但有实质内容的干预摘要")
 
     if signal == "stuck" and not any(
-        t in {"add_prerequisite", "adjust_rhythm", "suggest_review"}
+        t in {"add_prerequisite", "adjust_rhythm", "adjust_minutes", "suggest_review"}
         for t in {a.get("type") for a in actions}
     ):
         issues.append("stuck 信号下缺少对症干预（前置知识/调整节奏/建议复习）")
-        suggestions.append("stuck 信号建议优先: add_prerequisite / adjust_rhythm / suggest_review")
+        suggestions.append("stuck 信号建议优先: add_prerequisite / adjust_rhythm / adjust_minutes / suggest_review")
 
     verdict = "fail" if issues else "pass"
     return {"verdict": verdict, "issues": issues, "suggestions": suggestions}
