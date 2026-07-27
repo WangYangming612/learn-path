@@ -5,6 +5,8 @@ What: FastAPI 应用实例，作为整个后端服务的 HTTP 入口点
 Why: 统一管理路由注册、中间件配置和应用生命周期
 """
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -15,13 +17,28 @@ from app.api.v1.plans import router as plans_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.profile import router as profile_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI 应用生命周期管理
+
+    What: 在应用启动时启动 APScheduler，关闭时停止
+    Why: scheduler 需要在 FastAPI 事件循环内运行，使用 lifespan 管理其生命周期
+    """
+    from app.core.scheduler import scheduler
+
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+
 # 创建 FastAPI 应用实例
-# What: FastAPI 应用对象，用于注册路由和中间件
-# Why: FastAPI 是异步 Web 框架，支持自动生成 OpenAPI 文档（Swagger）
 app = FastAPI(
     title="LearnPath API",
     description="个性化学习路径动态生成系统后端 API",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # 配置 CORS 中间件
