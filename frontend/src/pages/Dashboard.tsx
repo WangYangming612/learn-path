@@ -25,22 +25,25 @@ const FEATURES = [
     desc: "用自然语言描述目标，AI 生成知识 DAG 与可完成性评估。",
     step: "已开放",
     tone: "teal",
+    path: "/plans",
   },
   {
     key: "daily",
     icon: <CalendarOutlined />,
     title: "每日排期",
     desc: "按画像与优先级自动编排今日任务，支持拖拽微调。",
-    step: "即将上线",
+    step: "已开放",
     tone: "cyan",
+    path: "/daily",
   },
   {
     key: "feedback",
     icon: <ThunderboltOutlined />,
     title: "反馈闭环",
     desc: "对话式反馈驱动路径调整，SSE 实时呈现 Agent 回应。",
-    step: "即将上线",
+    step: "已开放",
     tone: "amber",
+    path: "/daily",
   },
   {
     key: "profile",
@@ -88,6 +91,9 @@ const DashboardPage: React.FC = () => {
             >
               创建第一个计划
             </Button>
+            <Button size="large" icon={<CalendarOutlined />} onClick={() => navigate("/daily")}>
+              查看今日任务
+            </Button>
           </div>
         </div>
 
@@ -110,13 +116,26 @@ const DashboardPage: React.FC = () => {
           <Title level={4} style={{ margin: 0 }}>
             能力一览
           </Title>
-          <Text type="secondary">学习计划已开放，其余能力陆续接入</Text>
+          <Text type="secondary">学习计划与今日任务已开放，画像能力陆续接入</Text>
         </div>
 
         <Row gutter={[20, 20]}>
           {FEATURES.map((item) => (
             <Col xs={24} sm={12} xl={6} key={item.key}>
-              <article className={`dash-card dash-card--${item.tone}`}>
+              <article
+                className={`dash-card dash-card--${item.tone}${"path" in item ? " dash-card--clickable" : ""}`}
+                onClick={() => {
+                  if ("path" in item && item.path) navigate(item.path);
+                }}
+                role={"path" in item ? "button" : undefined}
+                tabIndex={"path" in item ? 0 : undefined}
+                onKeyDown={(e) => {
+                  if ("path" in item && item.path && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    navigate(item.path);
+                  }
+                }}
+              >
                 <div className="dash-card__icon">{item.icon}</div>
                 <div className="dash-card__meta">
                   <Text className="dash-card__step">{item.step}</Text>
