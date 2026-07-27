@@ -1,3 +1,5 @@
+﻿import pytest
+pytestmark = pytest.mark.usefixtures("mock_llm_for_plan_agent")
 from pathlib import Path
 import sys
 
@@ -44,3 +46,4 @@ async def test_plan_agent_node_creates_plan_and_nodes():
         assert all(node.estimated_minutes > 0 for node in nodes)
         assert all(node.order_index > 0 for node in nodes)
         break
+

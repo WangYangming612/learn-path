@@ -1,4 +1,4 @@
-"""
+﻿"""
 Profile Agent 测试共享 Fixtures
 
 提供：Mock 鉴权、Mock LLM、FastAPI TestClient
@@ -39,6 +39,14 @@ class MockChatModel:
 
     def invoke(self, messages, **kwargs):
         return MockAIMessage(self._response)
+
+    def with_structured_output(self, schema, **kwargs):
+        """模拟 LangChain 结构化输出"""
+        return self
+
+    async def astream(self, messages, **kwargs):
+        """模拟流式输出"""
+        yield MockAIMessage(self._response)
 
 
 def _mock_survey_analysis_response() -> str:
@@ -83,7 +91,75 @@ def _mock_survey_final_response() -> str:
     })
 
 
+
+# ── PlanDraft Mock Data ───────────────────────────────────────────
+_MOCK_PLAN_DRAFT_JSON = {
+    "goal_text": "我想3个月入门Python人工智能",
+    "parsed_goal": {
+        "domain": "Python人工智能",
+        "duration_months": 3,
+        "current_level": "beginner",
+        "target_depth": "introduction",
+    },
+    "nodes": [
+        {
+            "id": "mock-n1",
+            "title": "Python 基础语法",
+            "description": "掌握 Python 核心语法",
+            "estimated_minutes": 300,
+            "prerequisite_ids": [],
+        },
+        {
+            "id": "mock-n2",
+            "title": "NumPy 与数据处理",
+            "description": "学习 NumPy 数组操作",
+            "estimated_minutes": 240,
+            "prerequisite_ids": ["mock-n1"],
+        },
+    ],
+}
+
+
+async def _mock_plan_draft_ainvoke(*args, **kwargs):
+    """返回可模型校验的 mock PlanDraft"""
+    from app.schemas.plan import PlanDraft
+    return PlanDraft.model_validate(_MOCK_PLAN_DRAFT_JSON)
+
+
+# ── Plan Agent 专用 Mock ─────────────────────────────────────────
+@pytest.fixture
+def mock_llm_for_plan_agent(monkeypatch):
+    """Mock LLM 以保证 plan_agent 的 with_structured_output 调用成功"""
+
+    def _get_chat_model_for_plan(temperature=0, timeout=60, streaming=False):
+        model = MockChatModel("mock")
+        model.ainvoke = _mock_plan_draft_ainvoke
+        return model
+
+    monkeypatch.setattr(
+        "app.agents.plan_agent.llm_client.get_chat_model", _get_chat_model_for_plan
+    )
+    yield
+
 # ── Fixtures ──────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _clean_db():
+    """自动清理测试数据库表，防止跨测试数据泄漏"""
+    yield
+    # 测试结束后清理所有表数据
+    import asyncio
+    from app.db.session import get_engine
+    from app.db.base import Base
+
+    async def _clean():
+        engine = get_engine()
+        async with engine.begin() as conn:
+            for table in reversed(Base.metadata.sorted_tables):
+                await conn.execute(table.delete())
+    asyncio.run(_clean())
+
 
 @pytest.fixture(autouse=True)
 def mock_llm(monkeypatch):
@@ -131,3 +207,5 @@ def client(monkeypatch):
     from app.main import app
     app.dependency_overrides[get_current_user] = _mock_auth
     return TestClient(app)
+
+
