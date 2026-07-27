@@ -227,13 +227,20 @@ def _sqlite_type(column) -> str:
 
 @pytest.fixture(autouse=True)
 def _clean_db():
-    """自动清理测试数据库表，防止跨测试数据泄漏"""
-    yield
-    # 测试结束后清理所有表数据
+    """自动重建测试数据库表，防止跨测试数据和旧 schema 污染。"""
     import asyncio
     from app.db.session import get_engine
     from app.db.base import Base
 
+    async def _reset():
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
+
+    asyncio.run(_reset())
+    yield
+    # 测试结束后清理所有表数据
     async def _clean():
         engine = get_engine()
         async with engine.begin() as conn:

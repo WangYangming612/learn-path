@@ -23,6 +23,7 @@ from app.models.plan import Plan
 logger = logging.getLogger(__name__)
 DEFAULT_DAILY_BUDGET = 60
 MIN_TASK_MINUTES = 5
+MAX_REVIEW_ATTEMPTS = 3
 
 
 def _profile_value(profile: dict[str, Any], *keys: str) -> Any:
@@ -82,6 +83,48 @@ async def _generate_guide(plan: Plan, node: KnowledgeNode, duration_minutes: int
     except Exception as exc:
         logger.warning("[ScheduleAgent] 学习指引生成失败，使用兜底内容: %s", exc)
         return f"用 {duration_minutes} 分钟学习「{node.name}」，梳理核心概念并记录 1 个关键结论；完成后确认自己能用一句话说明该知识点。"
+
+
+def _review_planned_items(planned_items: list[dict[str, Any]], budget: int) -> None:
+    """对排期草案做基础审核。"""
+
+    if budget < MIN_TASK_MINUTES:
+        raise ValueError("可用预算不足")
+
+    if not planned_items:
+        raise ValueError("排期结果不能为空")
+
+    total_duration = 0
+    previous_end: time | None = None
+    seen_pairs: set[tuple[int, int | None]] = set()
+
+    for item in planned_items:
+        plan_id = item.get("plan_id")
+        knowledge_node_id = item.get("knowledge_node_id")
+        start_time = item.get("start_time")
+        end_time = item.get("end_time")
+        duration_minutes = item.get("duration_minutes")
+        guide_content = str(item.get("guide_content") or "").strip()
+
+        if plan_id is None:
+            raise ValueError("任务缺少 plan_id")
+        if duration_minutes is None or int(duration_minutes) < MIN_TASK_MINUTES:
+            raise ValueError("任务时长过短")
+        if not guide_content:
+            raise ValueError("任务指引不能为空")
+        if start_time is None or end_time is None:
+            raise ValueError("任务时间段不能为空")
+        if previous_end is not None and start_time < previous_end:
+            raise ValueError("任务时间段存在重叠")
+        if (plan_id, knowledge_node_id) in seen_pairs:
+            raise ValueError("任务重复排期")
+
+        seen_pairs.add((plan_id, knowledge_node_id))
+        previous_end = end_time
+        total_duration += int(duration_minutes)
+
+    if total_duration > budget:
+        raise ValueError("任务总时长超过可用预算")
 
 
 async def schedule_agent_node(state: AgentState) -> dict[str, Any]:
@@ -152,28 +195,48 @@ async def schedule_agent_node(state: AgentState) -> dict[str, Any]:
             else:
                 durations = requested
 
-            planned_items: list[dict[str, Any]] = []
-            cursor = start_at
-            remaining = budget
-            for (plan, node), duration in zip(candidates, durations):
-                if remaining < MIN_TASK_MINUTES:
-                    break
-                duration = min(duration, remaining)
-                end_at = cursor + timedelta(minutes=duration)
-                planned_items.append({
-                    "plan_id": plan.id,
-                    "knowledge_node_id": node.id,
-                    "title": f"{plan.title}：{node.name}",
-                    "description": node.description,
-                    "start_time": cursor.time(),
-                    "end_time": end_at.time(),
-                    "duration_minutes": duration,
-                    "guide_content": await _generate_guide(plan, node, duration),
-                })
-                cursor = end_at
-                remaining -= duration
+            reviewed_items: list[dict[str, Any]] | None = None
+            last_error: Exception | None = None
+            for attempt in range(1, MAX_REVIEW_ATTEMPTS + 1):
+                try:
+                    planned_items: list[dict[str, Any]] = []
+                    cursor = start_at
+                    remaining = budget
+                    for (plan, node), duration in zip(candidates, durations):
+                        if remaining < MIN_TASK_MINUTES:
+                            break
+                        duration = min(duration, remaining)
+                        end_at = cursor + timedelta(minutes=duration)
+                        planned_items.append({
+                            "plan_id": plan.id,
+                            "knowledge_node_id": node.id,
+                            "title": f"{plan.title}：{node.name}",
+                            "description": node.description,
+                            "start_time": cursor.time(),
+                            "end_time": end_at.time(),
+                            "duration_minutes": duration,
+                            "guide_content": await _generate_guide(plan, node, duration),
+                        })
+                        cursor = end_at
+                        remaining -= duration
 
-            created = await create_daily_tasks(db, user_id, planned_items, target_date)
+                    _review_planned_items(planned_items, budget)
+                    reviewed_items = planned_items
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    logger.warning(
+                        "[ScheduleAgent] 第 %s 轮排期审核失败，准备重试: %s",
+                        attempt,
+                        exc,
+                    )
+
+            if reviewed_items is None:
+                logger.warning("[ScheduleAgent] 排期多轮审核失败，使用最后一次结果继续: %s", last_error)
+                reviewed_items = planned_items if 'planned_items' in locals() else []
+                _review_planned_items(reviewed_items, budget)
+
+            created = await create_daily_tasks(db, user_id, reviewed_items, target_date)
             task_summary = [
                 {"task_id": task.id, "plan_id": task.plan_id, "title": task.title, "duration_minutes": task.duration_minutes}
                 for task in created
