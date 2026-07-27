@@ -6,9 +6,10 @@ Why: Plan Agent 将用户目标拆解为知识树，每个节点有难度和掌�
 How: parent_id 外键自关联实现树形结构，remote_side 确保关系方向正确
 """
 
+from datetime import date, datetime
 from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -70,6 +71,14 @@ class KnowledgeNode(Base, TimestampMixin):
     )
     mastery_level: Mapped[float] = mapped_column(
         Float, default=0.0, comment="用户当前掌握程度 (0.0 ~ 1.0)"
+    )
+
+    # ── 复习排期 ────────────────────────────────────────────
+    last_reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, default=None, comment="上次复习时间"
+    )
+    next_review_at: Mapped[Optional[date]] = mapped_column(
+        Date, default=None, comment="下次计划复习日期"
     )
 
     # ── 排序 ────────────────────────────────────────────────
