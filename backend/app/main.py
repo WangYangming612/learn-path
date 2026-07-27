@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.feedback import router as feedback_router
+from app.api.v1.journals import router as journals_router
 from app.api.v1.plans import router as plans_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.profile import router as profile_router
@@ -41,6 +42,7 @@ app.add_middleware(
 # Why: 不注册则路由不可用，include_router 统一管理所有子路由
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(feedback_router, prefix="/api/v1")
+app.include_router(journals_router, prefix="/api/v1")
 app.include_router(plans_router, prefix="/api/v1")
 app.include_router(tasks_router, prefix="/api/v1")
 app.include_router(profile_router, prefix="/api/v1")
