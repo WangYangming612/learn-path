@@ -561,6 +561,21 @@ async def _apply_single_action(
             await db.commit()
             return f"节点「{node.name}」预估时长调整为 {node.estimated_minutes} 分钟"
 
+        elif action_type == "schedule_review":
+            node_id = params.get("node_id")
+            next_review_date_str = params.get("next_review_date", "")
+            if not node_id:
+                raise ValueError("schedule_review 缺少 node_id")
+            node = await db.get(KnowledgeNode, int(node_id))
+            if node is None:
+                raise ValueError(f"知识节点 #{node_id} 不存在")
+            from datetime import date as _date, datetime as _datetime
+            if next_review_date_str:
+                node.next_review_at = _date.fromisoformat(next_review_date_str)
+            node.last_reviewed_at = _datetime.now()
+            await db.commit()
+            return f"节点「{node.name}」复习排期已更新: next_review_at={node.next_review_at}"
+
         else:
             return f"动作类型 {action_type} 无需落库操作（suggest_review / add_practice 暂不执行）"
 
@@ -646,6 +661,175 @@ async def run_intervention(
     }
     result = await graph.ainvoke(initial_state)
     return result
+
+
+# ── 定时任务入口函数 ──────────────────────────────────────────────
+
+_INACTIVE_DAYS_THRESHOLD = 3
+_RETENTION_INTERVALS: dict[str, float] = {
+    "遗忘较快": 1.5,
+    "短期记忆需巩固": 2.0,
+    "长期记忆良好": 4.5,
+    "扎实牢靠": 6.0,
+}
+_DEFAULT_REVIEW_INTERVAL = 3.0
+
+
+async def run_interruption_check() -> dict[str, Any]:
+    """
+    每日中断检测（供 scheduler 调用）
+
+    What: 查询所有用户，检测连续未学习天数，超阈值则暂停活跃计划
+    Why: 中断检测是恢复方案的前置条件，定时触发确保不漏检
+
+    Returns:
+        dict: {user_id: {interruption_detected, last_active_at, paused_plans}}
+    """
+    from datetime import date as _date, datetime as _datetime, timedelta
+    from sqlalchemy import select, func
+    from app.db.session import get_db as _get_db
+    from app.models.daily_task import DailyTask
+    from app.models.plan import Plan
+
+    threshold_date = _datetime.now() - timedelta(days=_INACTIVE_DAYS_THRESHOLD)
+    results: dict[str, Any] = {}
+
+    try:
+        async for db in _get_db():
+            user_rows = await db.execute(
+                select(DailyTask.user_id, func.max(DailyTask.completed_at).label("last_done"))
+                .where(DailyTask.status == "completed")
+                .group_by(DailyTask.user_id)
+            )
+            for row in user_rows:
+                uid = row.user_id
+                last_done = row.last_done
+                inactive = last_done is None or last_done < threshold_date
+                if not inactive:
+                    results[str(uid)] = {
+                        "interruption_detected": False,
+                        "last_active_at": last_done.isoformat() if last_done else None,
+                        "paused_plans": [],
+                    }
+                    continue
+
+                plan_rows = await db.execute(
+                    select(Plan).where(Plan.user_id == uid, Plan.status == "active")
+                )
+                active_plans = plan_rows.scalars().all()
+                paused: list[str] = []
+                for plan in active_plans:
+                    plan.status = "paused"
+                    paused.append(str(plan.id))
+                    logger.info(
+                        f"[InterventionAgent] 用户 {uid} 中断检测：暂停计划 #{plan.id}"
+                    )
+                if active_plans:
+                    await db.commit()
+
+                results[str(uid)] = {
+                    "interruption_detected": True,
+                    "last_active_at": last_done.isoformat() if last_done else None,
+                    "paused_plans": paused,
+                }
+            break
+    except Exception as exc:
+        logger.exception(f"[InterventionAgent] 中断检测失败: {exc}")
+
+    logger.info(f"[InterventionAgent] 中断检测完成: 检查 {len(results)} 位用户")
+    return results
+
+
+async def run_forgetting_curve_review() -> dict[str, Any]:
+    """
+    每日遗忘曲线复习（供 scheduler 调用）
+
+    What: 读取画像 knowledge_retention，计算每个已掌握节点的复习间隔，
+          对需复习的节点更新 next_review_at
+    Why: 遗忘曲线排期是干预 Agent 的核心功能，定时触发确保复习不遗漏
+
+    Returns:
+        dict: {user_id: {reviewed_nodes: [...], skipped: int}}
+    """
+    from datetime import date as _date, datetime as _datetime, timedelta
+    from sqlalchemy import select
+    from app.db.session import get_db as _get_db
+    from app.models.knowledge_node import KnowledgeNode
+    from app.models.plan import Plan
+    from app.core.profile_service import get_user_profile
+
+    results: dict[str, Any] = {}
+    today = _date.today()
+
+    try:
+        async for db in _get_db():
+            user_rows = await db.execute(
+                select(Plan.user_id.distinct())
+                .where(Plan.status.in_(["active", "paused"]))
+            )
+            user_ids = [row[0] for row in user_rows]
+
+            for uid in user_ids:
+                profile_data = await get_user_profile(str(uid))
+                profile = profile_data.get("profile", {})
+                retention = profile.get("knowledge_retention", {})
+                retention_label = (
+                    retention.get("label", "")
+                    if isinstance(retention, dict)
+                    else str(retention) if retention else ""
+                )
+                interval_days = _RETENTION_INTERVALS.get(
+                    retention_label, _DEFAULT_REVIEW_INTERVAL
+                )
+
+                nodes_result = await db.execute(
+                    select(KnowledgeNode)
+                    .where(
+                        KnowledgeNode.plan.has(Plan.user_id == uid),
+                        KnowledgeNode.mastery_level > 0,
+                    )
+                    .order_by(KnowledgeNode.plan_id, KnowledgeNode.order_index)
+                )
+                nodes = nodes_result.scalars().all()
+
+                reviewed: list[str] = []
+                for node in nodes:
+                    if node.last_reviewed_at is None:
+                        next_review = today + timedelta(days=int(interval_days))
+                        node.next_review_at = next_review
+                        reviewed.append(
+                            f"node#{node.id} '{node.name}' → {next_review.isoformat()}"
+                        )
+                        continue
+
+                    if node.next_review_at is not None and node.next_review_at > today:
+                        continue
+
+                    next_review = today + timedelta(days=int(interval_days))
+                    node.next_review_at = next_review
+                    reviewed.append(
+                        f"node#{node.id} '{node.name}' → {next_review.isoformat()}"
+                    )
+
+                if reviewed:
+                    await db.commit()
+
+                results[str(uid)] = {
+                    "reviewed_nodes": reviewed,
+                    "interval_days": interval_days,
+                    "retention_label": retention_label or "默认",
+                }
+
+            break
+    except Exception as exc:
+        logger.exception(f"[InterventionAgent] 遗忘曲线复习任务失败: {exc}")
+
+    total_reviewed = sum(len(v["reviewed_nodes"]) for v in results.values())
+    logger.info(
+        f"[InterventionAgent] 遗忘曲线复习完成: "
+        f"{len(results)} 位用户, {total_reviewed} 个节点已排期"
+    )
+    return results
 
 
 # ── 审查器注册 ──────────────────────────────────────────────────
