@@ -144,6 +144,87 @@ def mock_llm_for_plan_agent(monkeypatch):
 # ── Fixtures ──────────────────────────────────────────────────────
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_schema():
+    """
+    确保测试数据库 schema 与 ORM 模型一致，自动补齐所有缺失字段。
+
+    What: 对比 Base.metadata 中定义的表/列与实际 SQLite 数据库，
+          对缺失列执行 ALTER TABLE ADD COLUMN
+    Why: 项目无 Alembic，OR 模型变更后已有数据库文件不会自动更新 schema。
+         此 fixture 保证每次测试运行前 schema 始终与 ORM 同步。
+    """
+    import asyncio
+    from sqlalchemy import text
+    from app.db.base import Base
+    from app.db.session import get_engine
+
+    async def _migrate():
+        engine = get_engine()
+        async with engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                table_name = table.name
+                # 查询数据库中该表现有列名
+                result = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+                existing_columns = {row[1] for row in result.fetchall()}
+
+                for column in table.columns:
+                    if column.name not in existing_columns:
+                        col_type = _sqlite_type(column)
+                        nullable = ""
+                        if column.nullable:
+                            nullable = ""
+                        else:
+                            nullable = " NOT NULL"
+                        default_clause = ""
+                        if column.default is not None:
+                            default_val = column.default.arg
+                            if isinstance(default_val, str):
+                                default_clause = f" DEFAULT '{default_val}'"
+                            elif isinstance(default_val, bool):
+                                default_clause = f" DEFAULT {1 if default_val else 0}"
+                            elif isinstance(default_val, (int, float)):
+                                default_clause = f" DEFAULT {default_val}"
+                        elif not column.nullable:
+                            # SQLite requires a default for NOT NULL columns added via ALTER
+                            if col_type in ("INTEGER", "FLOAT", "REAL"):
+                                default_clause = " DEFAULT 0"
+                            elif col_type == "TEXT":
+                                default_clause = " DEFAULT ''"
+                            elif col_type == "BOOLEAN":
+                                default_clause = " DEFAULT 0"
+                        sql = (
+                            f"ALTER TABLE {table_name} ADD COLUMN "
+                            f"{column.name} {col_type}{nullable}{default_clause}"
+                        )
+                        await conn.execute(text(sql))
+        await engine.dispose()
+
+    asyncio.run(_migrate())
+    yield
+
+
+def _sqlite_type(column) -> str:
+    """将 SQLAlchemy 列类型映射为 SQLite 类型名"""
+    import sqlalchemy.types as types
+
+    type_map = {
+        types.Integer: "INTEGER",
+        types.String: "TEXT",
+        types.Text: "TEXT",
+        types.Float: "REAL",
+        types.Boolean: "BOOLEAN",
+        types.Date: "DATE",
+        types.DateTime: "DATETIME",
+        types.Time: "TIME",
+        types.JSON: "TEXT",
+    }
+    for py_type, sql_type in type_map.items():
+        if isinstance(column.type, py_type):
+            return sql_type
+    return "TEXT"
+
+
 @pytest.fixture(autouse=True)
 def _clean_db():
     """自动清理测试数据库表，防止跨测试数据泄漏"""
