@@ -5,11 +5,12 @@ What: 实现系统入口智能体，负责意图分类和子图路由
 Why: Orchestrator 是用户请求的统一入口，通过意图分类将请求分发到对应子 Agent
 
 架构说明:
-    __start__ → intent_classifier → (条件边) → plan_agent / feedback_agent /
-                                                profile_agent / fallback_handler
-    各子节点 → __end__
+    __start__ → intent_classifier → orchestrator_loop → (条件边) →
+        plan_agent / feedback_agent / profile_agent / fallback_handler
+    子 Agent → orchestrator_loop（循环），fallback_handler → __end__
 """
 
+import logging
 from typing import Any, Literal
 
 from langchain_core.messages import AIMessage, HumanMessage
@@ -20,6 +21,8 @@ from app.agents.state import AgentState, create_initial_state
 from app.llm.client import llm_client
 from app.llm.prompts.orchestrator import build_intent_classification_messages
 from app.agents.profile_agent import run_profile_get_chat
+
+logger = logging.getLogger(__name__)
 
 
 # ── 意图分类（关键词规则） ────────────────────────────────────────
@@ -97,6 +100,83 @@ def intent_classifier_node(state: AgentState) -> dict[str, Any]:
         return {"next": intent}
 
 
+async def orchestrator_loop_node(state: AgentState) -> dict[str, Any]:
+    """
+    编排者循环节点
+
+    What: 宏观 loop 的核心。不产生内容，只做三件事：
+          1. 第一次进入时，把意图拆解为多步执行序列
+          2. 子 Agent 执行完回到这里，评估上一步结果
+          3. 决定下一步往哪走
+    Why: 让 Orchestrator 能够按序执行多 Agent 序列，而非一次路由就结束
+    """
+    execution_plan = state.get("execution_plan", [])
+    execution_index = state.get("execution_index", 0)
+    intent = state.get("next", "")
+
+    # 场景 A：第一次进入，拆解执行序列
+    if not execution_plan:
+        plan = await _decompose_intent(intent, state)
+        return {
+            "execution_plan": plan["steps"],
+            "execution_index": 1,
+            "next": plan["steps"][0] if plan["steps"] else "__end__",
+            "step_results": {},
+        }
+
+    # 场景 B：子 Agent 执行完回到这里
+    last_agent = execution_plan[execution_index - 1] if execution_index > 0 else ""
+
+    # 从 state 中提取子 Agent 的输出，保存到 step_results
+    step_results = dict(state.get("step_results", {}))
+    if last_agent:
+        captured = {}
+        if state.get("plan_result"):
+            captured["plan_result"] = state["plan_result"]
+        if state.get("schedule_result"):
+            captured["schedule_result"] = state["schedule_result"]
+        if state.get("feedback_question"):
+            captured["feedback_question"] = state["feedback_question"]
+        if last_agent in ("profile_agent", "fallback_handler") and state.get("messages"):
+            captured["messages"] = state["messages"]
+        if captured:
+            step_results[last_agent] = captured
+
+    # raw_agent_output 为空时，从 step_results 中拿上一次执行结果
+    last_output = state.get("raw_agent_output", {})
+    if not last_output:
+        last_output = step_results.get(last_agent, {})
+
+    # 跨 Agent 一致性校验
+    warnings = await _check_cross_agent_consistency(
+        execution_plan, execution_index, step_results, last_output
+    )
+
+    # 判断是否继续
+    should_continue = await _evaluate_step_result(last_agent, last_output, state)
+
+    if not should_continue:
+        new_plan = await _replan(state)
+        return {
+            "step_results": step_results,
+            "execution_plan": new_plan["steps"],
+            "execution_index": 1,
+            "next": new_plan["steps"][0] if new_plan["steps"] else "fallback_handler",
+            "orchestration_warnings": warnings,
+        }
+
+    if execution_index < len(execution_plan):
+        next_step = execution_plan[execution_index]
+        return {
+            "step_results": step_results,
+            "execution_index": execution_index + 1,
+            "next": next_step,
+            "orchestration_warnings": warnings,
+        }
+
+    return {"step_results": step_results, "next": "__end__", "orchestration_warnings": warnings}
+
+
 def feedback_agent_node(state: AgentState) -> dict[str, Any]:
     """
     反馈 Agent 节点
@@ -119,6 +199,7 @@ def feedback_agent_node(state: AgentState) -> dict[str, Any]:
             )
         )]
     }
+ 
 async def profile_agent_node(state: AgentState) -> dict[str, Any]:
     """
     画像 Agent 节点
@@ -168,6 +249,95 @@ def fallback_handler_node(state: AgentState) -> dict[str, Any]:
     }
 
 
+# ── 编排者循环辅助函数 ────────────────────────────────────────────
+
+
+async def _decompose_intent(intent: str, state: AgentState) -> dict:
+    """将意图拆解为多步执行序列"""
+    # 用户需要先有画像才能创建计划
+    # 已有画像的用户直接创建计划
+    if intent == "create_plan":
+        # 查用户是否有画像
+        from app.core.profile_service import get_user_profile
+        try:
+            profile_full = await get_user_profile(state.get("user_id", ""))
+            profile = profile_full.get("profile", {})
+            has_profile = any(
+                isinstance(dim, dict) and dim.get("label", "").strip()
+                for dim in (profile or {}).values()
+            )
+        except Exception:
+            has_profile = False
+
+        if has_profile:
+            return {"steps": ["plan_agent"]}
+        else:
+            return {"steps": ["profile_agent", "plan_agent"]}
+
+    elif intent == "submit_feedback":
+        return {"steps": ["feedback_agent"]}
+    elif intent == "view_profile":
+        return {"steps": ["profile_agent"]}
+    else:
+        return {"steps": ["fallback_handler"]}
+
+
+async def _evaluate_step_result(agent_type: str, output: dict, state: AgentState) -> bool:
+    """评估上一步 Agent 的执行结果是否合格"""
+    if not output:
+        return False
+
+    if agent_type == "plan_agent" and not output.get("plan_result"):
+        return False
+
+    if agent_type == "schedule_agent" and not output.get("schedule_result"):
+        return False
+
+    if agent_type == "profile_agent" and not output.get("messages"):
+        return False
+
+    if agent_type == "feedback_agent" and not output.get("feedback_question"):
+        return False
+
+    return True
+
+
+async def _check_cross_agent_consistency(
+    plan: list[str], index: int, results: dict, latest_output: dict
+) -> list[str]:
+    """跨 Agent 一致性校验：目前检查 Plan 预估 vs Schedule 排期是否匹配"""
+    warnings = []
+    plan_result = results.get("plan_agent", {})
+    schedule_result = latest_output.get("schedule_result", {}) if latest_output else {}
+    if not schedule_result:
+        schedule_result = results.get("schedule_agent", {})
+
+    if plan_result and schedule_result:
+        nodes = plan_result.get("nodes", []) or []
+        planned_minutes = sum(n.get("estimated_minutes", 0) or 0 for n in nodes)
+        tasks = schedule_result.get("tasks", []) or []
+        scheduled_minutes = sum(t.get("duration_minutes", 0) or 0 for t in tasks)
+
+        if planned_minutes > 0 and scheduled_minutes > planned_minutes * 2:
+            warnings.append(
+                f"排期({scheduled_minutes}分)远超计划日均量({planned_minutes}分)"
+            )
+
+    return warnings
+
+
+async def _replan(state: AgentState) -> dict:
+    """当前路径走不通时的重新规划"""
+    intent = state.get("next", "")
+    plan = state.get("execution_plan", [])
+    index = state.get("execution_index", 0)
+
+    if index >= len(plan):
+        return {"steps": ["fallback_handler"]}
+
+    return {"steps": plan[index:]}  # 跳过失败的步骤继续
+
+
 # ── 条件路由函数 ────────────────────────────────────────────────
 
 def router_after_classification(state: AgentState) -> Literal[
@@ -185,15 +355,7 @@ def router_after_classification(state: AgentState) -> Literal[
     Returns:
         str: 目标节点名称
     """
-    intent = state.get("next", "other")
-
-    routing_map = {
-        "create_plan": "plan_agent",
-        "submit_feedback": "feedback_agent",
-        "view_profile": "profile_agent",
-    }
-
-    return routing_map.get(intent, "fallback_handler")
+    return state.get("next", "fallback_handler")
 
 
 # ── 图构建与运行 ────────────────────────────────────────────────
@@ -213,6 +375,7 @@ def create_orchestrator_graph() -> StateGraph:
 
     # ── 注册节点 ──────────────────────────────────────────────
     graph.add_node("intent_classifier", intent_classifier_node)
+    graph.add_node("orchestrator_loop", orchestrator_loop_node)
     graph.add_node("plan_agent", plan_agent_node)
     graph.add_node("feedback_agent", feedback_agent_node)
     graph.add_node("profile_agent", profile_agent_node)
@@ -222,9 +385,12 @@ def create_orchestrator_graph() -> StateGraph:
     # 起始 → 意图分类器
     graph.add_edge(START, "intent_classifier")
 
-    # 意图分类器 → 条件路由 → 各子节点
+    # 意图分类器 → 编排者循环
+    graph.add_edge("intent_classifier", "orchestrator_loop")
+
+    # 编排者循环 → 条件路由 → 各子节点
     graph.add_conditional_edges(
-        "intent_classifier",
+        "orchestrator_loop",
         router_after_classification,
         {
             "plan_agent": "plan_agent",
@@ -234,10 +400,12 @@ def create_orchestrator_graph() -> StateGraph:
         },
     )
 
-    # 各子节点 → 终点
-    graph.add_edge("plan_agent", END)
-    graph.add_edge("feedback_agent", END)
-    graph.add_edge("profile_agent", END)
+    # 子 Agent 执行完毕后回到编排者循环
+    graph.add_edge("plan_agent", "orchestrator_loop")
+    graph.add_edge("feedback_agent", "orchestrator_loop")
+    graph.add_edge("profile_agent", "orchestrator_loop")
+
+    # fallback_handler → 终点（降级处理不需要再循环）
     graph.add_edge("fallback_handler", END)
 
     return graph.compile()

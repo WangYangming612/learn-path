@@ -5,7 +5,7 @@ What: 定义基于 LangGraph 的通用智能体状态基类 AgentState
 Why: 作为所有 Agent 状态的基础类型，确保类型安全和结构一致
 """
 
-from typing import Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph import add_messages
@@ -37,6 +37,18 @@ class AgentState(TypedDict):
     next: str
     parsed_goal: dict | None
     plan_result: dict | None
+    # ── 编排者循环字段 ──
+    execution_plan: list[str]
+    execution_index: int
+    step_results: dict[str, Any]
+    orchestration_warnings: list[str]
+
+    # ── 审查回路字段 ──
+    review_attempts: int
+    review_max_attempts: int
+    review_results: list[dict]
+    raw_agent_output: dict | None
+    review_verdict: str
 
 
 def create_initial_state(
@@ -77,6 +89,19 @@ def create_initial_state(
         "agent_type": agent_type,
         "tools": tools or [],
         "next": next,
+        "parsed_goal": None,
+        "plan_result": None,
+        # 编排者循环字段
+        "execution_plan": [],
+        "execution_index": 0,
+        "step_results": {},
+        "orchestration_warnings": [],
+        # 审查回路字段
+        "review_attempts": 0,
+        "review_max_attempts": 3,
+        "review_results": [],
+        "raw_agent_output": None,
+        "review_verdict": "",
     }
 class FeedbackAgentState(AgentState):
     """
