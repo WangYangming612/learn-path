@@ -145,7 +145,51 @@ async def generate_question(state: FeedbackAgentState) -> dict[str, Any]:
         logger.error(f"[FeedbackAgent] 生成追问失败: {exc}")
         question = "今天的学习感觉怎么样？有什么想和我分享的吗？"
 
+    # 微观自审：检查追问是否合理
+    if question:
+        review = await _self_review_question(
+            question=question,
+            learning_content=state.get("learning_content", ""),
+        )
+        if review.get("verdict") == "fail":
+            logger.info(f"[FeedbackAgent] 追问自审不通过: {review.get('issues')}")
+
     return {"feedback_question": question}
+
+
+async def _self_review_question(question: str, learning_content: str) -> dict:
+    """
+    追问质量自审
+
+    What: 先用规则快速过滤，再用 LLM 做语义审查
+    Why: 避免生成无关或质量差的追问影响用户体验
+    """
+    # 规则检查（快速，免 LLM）
+    if len(question) < 5:
+        return {"verdict": "fail", "issues": ["追问太短"]}
+
+    # LLM 语义审查
+    try:
+        chat_model = llm_client.get_chat_model(temperature=0, timeout=10)
+        response = await chat_model.ainvoke([
+            {"role": "system", "content": (
+                "你是一个追问质量审查员。检查以下追问是否合理。标准：\n"
+                "1. 追问是否与学习内容相关\n"
+                "2. 追问是否回避用户没提过的新概念\n"
+                "3. 追问语气是否友好、开放\n"
+                "请回复 JSON: {\"verdict\": \"pass\"|\"fail\", \"issues\": [\"问题1\", \"问题2\"]}"
+            )},
+            {"role": "user", "content": f"学习内容：{learning_content}\n追问：{question}"},
+        ])
+        raw = response.content.strip()
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+        import json
+        return json.loads(raw)
+    except Exception:
+        return {"verdict": "pass"}  # 自审失败时放行，不阻塞
 
 
 async def parse_signal(state: FeedbackAgentState) -> dict[str, Any]:
@@ -312,6 +356,17 @@ async def run_feedback_graph_first_half(
         "agent_type": "feedback",
         "tools": [],
         "next": "",
+        "parsed_goal": None,
+        "plan_result": None,
+        "execution_plan": [],
+        "execution_index": 0,
+        "step_results": {},
+        "orchestration_warnings": [],
+        "review_attempts": 0,
+        "review_max_attempts": 3,
+        "review_results": [],
+        "raw_agent_output": None,
+        "review_verdict": "",
         "feedback_signal": None,
         "confidence_delta": None,
         "replan_triggered": False,
@@ -357,6 +412,17 @@ async def run_feedback_graph_second_half(
         "agent_type": "feedback",
         "tools": [],
         "next": "",
+        "parsed_goal": None,
+        "plan_result": None,
+        "execution_plan": [],
+        "execution_index": 0,
+        "step_results": {},
+        "orchestration_warnings": [],
+        "review_attempts": 0,
+        "review_max_attempts": 3,
+        "review_results": [],
+        "raw_agent_output": None,
+        "review_verdict": "",
         "feedback_signal": None,
         "confidence_delta": None,
         "replan_triggered": False,
@@ -413,6 +479,24 @@ async def save_feedback_session(
             )
             db.add(session)
             await db.commit()
+            # ── 信号闭环：将反馈信号写回 DailyTask，供 Schedule 读取 ──
+            try:
+                from app.models.daily_task import DailyTask
+                from sqlalchemy import select
+
+                result = await db.execute(
+                    select(DailyTask).where(DailyTask.id == int(task_id))
+                )
+                task = result.scalar_one_or_none()
+                if task:
+                    task.feedback_signal = signal
+                    task.feedback_confidence_delta = confidence_delta
+                    await db.commit()
+                    logger.info(
+                        f"[FeedbackAgent] 反馈信号写入 DailyTask #{task_id}: signal={signal}, delta={confidence_delta}"
+                    )
+            except Exception as exc:
+                logger.warning(f"[FeedbackAgent] 写入 DailyTask 反馈信号失败: {exc}")
             break
         return True
     except Exception as exc:
