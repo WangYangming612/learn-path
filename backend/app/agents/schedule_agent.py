@@ -16,11 +16,11 @@ from typing import Any, Literal
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import select
+from sqlalchemy import select, desc
 
 from app.agents.review import get_reviewer, register_reviewer
 from app.agents.state import ScheduleAgentState
-from app.core.profile_service import get_user_profile
+from app.core.profile_service import get_user_profile, PROFILE_DIMENSIONS, DEFAULT_LABEL
 from app.core.task_service import create_daily_tasks
 from app.db.session import get_db
 from app.llm.client import llm_client
@@ -28,6 +28,7 @@ from app.llm.prompts.schedule import SCHEDULE_GUIDE_SYSTEM_PROMPT, SCHEDULE_GUID
 from app.models.daily_task import DailyTask
 from app.models.knowledge_node import KnowledgeNode
 from app.models.plan import Plan
+from app.schemas.schedule import LLMScheduleOutput
 
 logger = logging.getLogger(__name__)
 DEFAULT_DAILY_BUDGET = 60
@@ -77,19 +78,24 @@ def _plan_priority(plan: Plan) -> int:
     return priority if priority in (1, 2, 3) else 2
 
 
-def _fallback_guide(node_name: str, duration_minutes: int, node_description: str | None = None) -> str:
-    """LLM 不可用时的 Markdown 学习指引兜底。"""
-
-    focus = (node_description or "").strip() or f"「{node_name}」的核心概念与适用场景"
-    return (
-        f"## 重点理解\n"
-        f"{focus}\n\n"
-        f"## 建议练习\n"
-        f"- 用 {duration_minutes} 分钟精读并整理 3 条要点\n"
-        f"- 完成后用一句话向自己复述该知识点\n\n"
-        f"## 搜索关键词\n"
-        f"{node_name}, 入门, 练习"
-    )
+def _fallback_guide(node_name, duration_minutes, node_description=None):
+    """LLM 不可用时学习指引兜底"""
+    node_desc = (node_description or '').strip()
+    focus = node_desc or ('学习' + node_name)
+    NL = chr(10)
+    parts = [
+        '## 重点理解',
+        focus,
+        '',
+        '## 建议练习',
+        '- 用 ' + str(duration_minutes) + ' 分钟精读并理解核心概念',
+        '- 尝试用自己的语言总结 3 个关键点',
+        '- 完成 2~3 道相关练习题',
+        '',
+        '## 搜索关键词',
+        node_name + ', 教程, 练习',
+    ]
+    return NL.join(parts)
 
 
 async def _generate_guide(plan: Plan, node: KnowledgeNode, duration_minutes: int) -> str:
@@ -150,6 +156,73 @@ def _compress_durations(requested: list[int], budget: int) -> tuple[list[int], b
         if overflow <= 0:
             break
     return durations, True
+# ── LLM 排期上下文格式化（画像、计划、反馈） ──────────────
+
+def _format_profile_for_llm(profile: dict[str, Any]) -> str:
+    """将用户画像格式化为 LLM 可读的摘要文本"""
+    dim_names = {
+        "learning_style": "学习风格",
+        "best_time_slots": "最佳学习时段",
+        "learning_rhythm": "学习节奏偏好",
+        "feedback_baseline": "反馈基线",
+        "persistence": "持续力特征",
+        "knowledge_retention": "知识保留特征",
+    }
+    lines = []
+    for dim in PROFILE_DIMENSIONS:
+        entry = profile.get(dim, {})
+        if isinstance(entry, dict):
+            label = entry.get("label", DEFAULT_LABEL)
+            confidence = entry.get("confidence", 0)
+            display_name = dim_names.get(dim, dim)
+            if label not in (DEFAULT_LABEL, ""):
+                lines.append(f"  - {display_name}: {label} (置信度 {confidence}%)")
+            else:
+                lines.append(f"  - {display_name}: 未知")
+    return "\n".join(lines) if lines else "  （无画像数据）"
+
+
+def _format_plans_for_llm(plans_with_nodes: list[dict[str, Any]]) -> str:
+    """将活跃计划及知识节点格式化为 LLM 可读文本"""
+    if not plans_with_nodes:
+        return "  （当前无活跃计划）"
+    lines = []
+    for p in plans_with_nodes:
+        priority_label = {1: "高", 2: "中", 3: "低"}.get(p.get("priority", 2), "中")
+        lines.append(f"  - [{p['plan_title']}] 优先级={priority_label}, 每日预算={p['daily_budget']}分钟")
+        for node in p.get("nodes", []):
+            lines.append(f"    * 节点: {node['name']}  |  预计: {node['estimated_minutes']}分钟  |  ID: {node['id']}")
+            if node.get("description"):
+                lines.append(f"      描述: {node['description']}")
+    return "\n".join(lines)
+
+
+def _format_feedback_for_llm(feedback_records: list[dict[str, Any]]) -> str:
+    """将近期反馈信号格式化为 LLM 可读文本"""
+    if not feedback_records:
+        return "  （近 7 天无反馈记录）"
+    lines = []
+    for fb in feedback_records:
+        signal_label = {
+            "stuck": "卡住了",
+            "too_easy": "太简单",
+            "normal": "节奏合适",
+            "need_practice": "需要练习",
+        }.get(fb.get("signal"), fb.get("signal", "未知"))
+        lines.append(f"  - [{fb.get('date', '?')}] {fb.get('node_name', '?')} -> {signal_label}")
+    return "\n".join(lines)
+
+
+def _parse_time_str(time_str: str) -> tuple[int, int]:
+    """解析 "HH:MM" 格式时间字符串为 (时, 分)"""
+    try:
+        parts = time_str.strip().split(":")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return 19, 0
+
+
+
 
 
 # ── 审查回路 ─────────────────────────────────────────────────────
@@ -317,18 +390,17 @@ def review_router(state: ScheduleAgentState) -> Literal["retry", "end"]:
 # ── 子图节点 ─────────────────────────────────────────────────────
 
 async def load_schedule_context(state: ScheduleAgentState) -> dict[str, Any]:
-    """加载用户预算、活跃计划与可排期知识节点。"""
-
+    """加载用户预算、活跃计划、可排期知识节点、用户画像及近期反馈信号"""
     try:
         user_id = int(state.get("user_id", "0"))
         target_date = _parse_target_date(state.get("scheduled_date"))
-        profile = await get_user_profile(str(user_id))
+        profile_full = await get_user_profile(str(user_id))
+        profile = profile_full.get("profile", {})
         budget = _daily_budget(profile, state.get("daily_budget"))
         start_at = datetime.combine(target_date, _preferred_start(profile))
 
         async for db in get_db():
             from app.models.user import User
-
             user_result = await db.execute(select(User).where(User.id == user_id))
             user = user_result.scalar_one_or_none()
             if state.get("daily_budget") is None and user:
@@ -337,19 +409,17 @@ async def load_schedule_context(state: ScheduleAgentState) -> dict[str, Any]:
             plans_result = await db.execute(
                 select(Plan).where(Plan.user_id == user_id, Plan.status == "active")
             )
-            plans = sorted(plans_result.scalars().all(), key=lambda plan: (_plan_priority(plan), plan.id))
-            if not plans:
-                return {
-                    "scheduled_date": target_date,
-                    "skip_reason": "当前没有可排期的活跃学习计划。",
-                    "schedule_context": None,
-                    "planned_items": [],
-                    "overflow_detected": False,
-                    "schedule_result": _empty_schedule_result(target_date),
-                    "messages": [AIMessage(content="当前没有可排期的活跃学习计划。")],
-                    "review_attempts": 0,
-                }
+            plans = sorted(plans_result.scalars().all(), key=lambda p: (_plan_priority(p), p.id))
 
+            # 优先使用计划的 daily_budget 总和（而非前端传入的 user.daily_available_minutes 默认值60）
+            if plans:
+                plan_budget = sum(p.daily_budget for p in plans)
+                budget = max(plan_budget, MIN_TASK_MINUTES)
+
+            if not plans:
+                return _build_skip_result(target_date, "当前没有可排期的活跃学习计划。")
+
+            # 获取所有节点及其完成状态
             completed_node_result = await db.execute(
                 select(DailyTask.knowledge_node_id).where(
                     DailyTask.user_id == user_id,
@@ -358,45 +428,83 @@ async def load_schedule_context(state: ScheduleAgentState) -> dict[str, Any]:
                 )
             )
             completed_node_ids = set(completed_node_result.scalars().all())
-            candidates: list[dict[str, Any]] = []
+
+            # 构建计划+节点信息
+            plans_with_nodes = []
+            candidates = []
             for plan in plans:
                 node_result = await db.execute(
                     select(KnowledgeNode)
                     .where(KnowledgeNode.plan_id == plan.id)
                     .order_by(KnowledgeNode.order_index.asc(), KnowledgeNode.id.asc())
                 )
-                node = next(
-                    (item for item in node_result.scalars().all() if item.id not in completed_node_ids),
-                    None,
-                )
-                if node:
-                    candidates.append({
-                        "plan_id": plan.id,
-                        "plan_title": plan.title,
-                        "node_id": node.id,
-                        "node_name": node.name,
-                        "node_description": node.description,
+                nodes = list(node_result.scalars().all())
+                plan_nodes_info = []
+                for node in nodes:
+                    plan_nodes_info.append({
+                        "id": node.id,
+                        "name": node.name,
+                        "description": node.description,
                         "estimated_minutes": max(node.estimated_minutes or MIN_TASK_MINUTES, MIN_TASK_MINUTES),
+                        "completed": node.id in completed_node_ids,
                     })
+                plans_with_nodes.append({
+                    "plan_id": plan.id,
+                    "plan_title": plan.title,
+                    "daily_budget": plan.daily_budget,
+                    "priority": _plan_priority(plan),
+                    "nodes": plan_nodes_info,
+                })
+                # 每个计划取第一个未完成节点作为候选
+                for node in plan_nodes_info:
+                    if not node["completed"]:
+                        candidates.append({
+                            "plan_id": plan.id,
+                            "plan_title": plan.title,
+                            "plan_priority": _plan_priority(plan),
+                            "daily_budget": plan.daily_budget,
+                            "node_id": node["id"],
+                            "node_name": node["name"],
+                            "node_description": node["description"],
+                            "estimated_minutes": node["estimated_minutes"],
+                        })
+                        break
 
             if not candidates:
-                return {
-                    "scheduled_date": target_date,
-                    "skip_reason": "当前活跃计划暂无可排期的知识节点。",
-                    "schedule_context": None,
-                    "planned_items": [],
-                    "overflow_detected": False,
-                    "schedule_result": _empty_schedule_result(target_date),
-                    "messages": [AIMessage(content="当前活跃计划暂无可排期的知识节点。")],
-                    "review_attempts": 0,
-                }
+                return _build_skip_result(target_date, "当前活跃计划暂无可排期的知识节点。")
 
-            requested = [item["estimated_minutes"] for item in candidates]
-            durations, overflow_detected = _compress_durations(requested, budget)
+            # 加载近期反馈信号（7天内）
+            recent_feedback_records = []
+            try:
+                db_desc = desc
+                feedback_result = await db.execute(
+                    select(DailyTask)
+                    .where(
+                        DailyTask.user_id == user_id,
+                        DailyTask.scheduled_date >= target_date - timedelta(days=7),
+                        DailyTask.feedback_signal.is_not(None),
+                    )
+                    .order_by(db_desc(DailyTask.scheduled_date))
+                )
+                for ftask in feedback_result.scalars().all():
+                    recent_feedback_records.append({
+                        "date": str(ftask.scheduled_date),
+                        "signal": ftask.feedback_signal,
+                        "node_name": ftask.title,
+                        "confidence_delta": ftask.feedback_confidence_delta or 0,
+                    })
+            except Exception as exc:
+                logger.warning("[ScheduleAgent] 加载反馈记录失败: %s", exc)
+
+            # 格式化上下文供 LLM 使用
+            profile_summary = _format_profile_for_llm(profile)
+            plans_summary = _format_plans_for_llm(plans_with_nodes)
+            feedback_summary = _format_feedback_for_llm(recent_feedback_records)
+
             return {
                 "scheduled_date": target_date,
                 "skip_reason": None,
-                "overflow_detected": overflow_detected,
+                "overflow_detected": False,
                 "planned_items": [],
                 "schedule_result": None,
                 "review_attempts": 0,
@@ -406,75 +514,220 @@ async def load_schedule_context(state: ScheduleAgentState) -> dict[str, Any]:
                     "user_id": user_id,
                     "budget": budget,
                     "start_at": start_at.isoformat(),
+                    "preferred_start": str(start_at.time()),
                     "candidates": candidates,
-                    "durations": durations,
+                    "profile_summary": profile_summary,
+                    "plans_summary": plans_summary,
+                    "feedback_summary": feedback_summary,
+                    "plans_with_nodes": plans_with_nodes,
+                    "raw_profile": profile,
                 },
             }
     except Exception as exc:
         logger.exception("[ScheduleAgent] load_schedule_context 失败: %s", exc)
         target_date = _parse_target_date(state.get("scheduled_date"))
-        return {
-            "scheduled_date": target_date,
-            "skip_reason": "今日任务生成失败，请稍后重试。",
-            "schedule_context": None,
-            "planned_items": [],
-            "overflow_detected": False,
-            "schedule_result": {"tasks": []},
-            "messages": [AIMessage(content="今日任务生成失败，请稍后重试。")],
-            "review_attempts": 0,
-        }
+        return _build_skip_result(target_date, "今日任务生成失败，请稍后重试。")
+def _build_skip_result(target_date, reason):
+    return {
+        "scheduled_date": target_date,
+        "skip_reason": reason,
+        "schedule_context": None,
+        "planned_items": [],
+        "overflow_detected": False,
+        "schedule_result": {"tasks": [], "total_minutes": 0, "overflow_detected": False, "scheduled_date": str(target_date)},
+        "review_attempts": 0,
+    }
 
 
-async def generate_schedule(state: ScheduleAgentState) -> dict[str, Any]:
-    """根据上下文生成排期草案（含学习指引），不落库。"""
+async def llm_generate_schedule(state: ScheduleAgentState) -> dict[str, Any]:
+    """LLM驱动排期：直接用 httpx 调用 DeepSeek API"""
+    if state.get('skip_reason'): return {}
+    context = state.get('schedule_context') or {}
+    budget = int(context.get('budget', DEFAULT_DAILY_BUDGET))
+    pref_start = str(context.get('preferred_start', '19:00'))
+    use_fb = int(state.get('review_attempts', 0) or 0) > 0
+    if use_fb:
+        return await _fallback_llm_schedule(state, context, budget)
+    try:
+        import httpx
+        from app.core.config import settings
+        from app.schemas.schedule import LLMScheduleOutput, ScheduleTaskItem
 
-    if state.get("skip_reason"):
-        return {}
+        today = str(_parse_target_date(state.get('scheduled_date')))
+        ps = context.get('profile_summary', '-')
+        ls = context.get('plans_summary', '-')
+        fs = context.get('feedback_summary', '-')
 
-    context = state.get("schedule_context") or {}
-    candidates = list(context.get("candidates") or [])
-    durations = list(context.get("durations") or [])
-    budget = int(context.get("budget") or DEFAULT_DAILY_BUDGET)
-    start_at = datetime.fromisoformat(str(context["start_at"]))
+        NL = chr(10)
+        parts = [SCHEDULE_LLM_SYSTEM_PROMPT, '', '## 当前输入', '',
+            '今天日期：' + today,
+            '可用预算：' + str(budget) + ' 分钟',
+            '偏好起始时间：' + pref_start, '',
+            '===== 用户画像 =====', ps, '',
+            '===== 活跃计划 =====', ls, '',
+            '===== 近期反馈 =====', fs, '',
+            '## 输出要求',
+            '请严格输出JSON格式。输出格式：',
+            '{"reasoning": "推理", "replan_decisions": [], "tasks": [{"plan_id": 1, "knowledge_node_id": 1, "title": "任务", "duration_minutes": 60}]}',
+        ]
+        user_content = NL.join(parts)
 
-    planned_items: list[dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                settings.LLM_BASE_URL + '/chat/completions',
+                json={'model': 'deepseek-chat', 'messages': [
+                    {'role': 'system', 'content': '你是一位智能学习排期专家。以JSON格式输出今日最优排期。'},
+                    {'role': 'user', 'content': user_content},
+                ], 'temperature': 0.3, 'max_tokens': 2000},
+                headers={'Authorization': 'Bearer ' + settings.LLM_API_KEY, 'Content-Type': 'application/json'},
+            )
+
+        if resp.status_code != 200:
+            raise RuntimeError('HTTP ' + str(resp.status_code) + ': ' + resp.text[:200])
+
+        raw = resp.json()['choices'][0]['message']['content'].strip()
+        if raw.startswith('`'):
+            raw = raw.split('\n', 1)[-1] if '\n' in raw else raw[3:]
+            if raw.endswith('`'): raw = raw[:-3]
+            raw = raw.strip()
+
+        import json as _json
+        parsed = _json.loads(raw)
+        reason = str(parsed.get('reasoning', ''))
+        tasks_raw = parsed.get('tasks', [])
+        if not tasks_raw: raise ValueError('LLM返回空任务列表')
+
+        valid = []
+        for t in tasks_raw:
+            valid.append(ScheduleTaskItem(
+                plan_id=int(t['plan_id']),
+                knowledge_node_id=int(t['knowledge_node_id']),
+                title=str(t.get('title', '')),
+                duration_minutes=int(t.get('duration_minutes', 30)),
+            ))
+        llm_out = LLMScheduleOutput(reasoning=reason, replan_decisions=parsed.get('replan_decisions', []), tasks=valid)
+
+        logger.info('[ScheduleAgent] LLM排期成功: %d 个任务, reason=%s', len(llm_out.tasks), reason[:60])
+
+        cmap = {c['node_id']: c for c in context.get('candidates', [])}
+        items = []; ch, cm = _parse_time_str(pref_start)
+        for t in llm_out.tasks:
+            c = cmap.get(t.knowledge_node_id)
+            if not c: continue
+            used = sum(i['duration_minutes'] for i in items)
+            dur = min(int(t.duration_minutes), budget - used)
+            if dur < MIN_TASK_MINUTES: continue
+            sm = ch*60+cm; em = sm+dur
+            items.append({'plan_id': c['plan_id'], 'knowledge_node_id': c['node_id'],
+                'title': t.title or (c['plan_title'] + '：' + c['node_name']),
+                'description': c.get('node_description'),
+                'start_time': time(sm//60, sm%60), 'end_time': time(em//60, em%60),
+                'duration_minutes': dur, 'guide_content': None})
+            cm += dur; ch += cm//60; cm %= 60
+
+        if not items: return {'planned_items': []}
+        return {'planned_items': items, 'llm_reasoning': reason}
+    except Exception as e:
+        logger.warning('[ScheduleAgent] LLM排期失败: %s', e)
+        fb = await _fallback_llm_schedule(state, context, budget)
+        fb['llm_error'] = str(e)[:400]
+        return fb
+async def _fallback_llm_schedule(
+    state: ScheduleAgentState | None,
+    context: dict[str, Any],
+    budget: int,
+) -> dict[str, Any]:
+    """画像感知兜底排期：利用画像信息做更合理的分配，而非简单的平均压缩"""
+    candidates = list(context.get("candidates", []))
+    if not candidates:
+        return {"planned_items": []}
+
+    start_s = str(context.get("start_at", ""))
+    try:
+        start_at = datetime.fromisoformat(start_s)
+    except (ValueError, TypeError):
+        start_at = datetime.combine(date.today(), time(19, 0))
+
+    # 利用画像信息：获取最佳时段偏好，调整任务时长
+    raw_profile = context.get("raw_profile", {})
+    preferred_label = ""
+    if isinstance(raw_profile, dict):
+        best_time = raw_profile.get("best_time_slots", {})
+        if isinstance(best_time, dict):
+            preferred_label = best_time.get("label", "")
+
+    # 按优先级排序，同优先级内按每日预算降序
+    candidates.sort(key=lambda c: (c.get("plan_priority", 2), -c.get("daily_budget", 30)))
+
+    # 对候选项：考虑画像的节奏偏好来调整时长分配
+    rhythm_label = ""
+    if isinstance(raw_profile, dict):
+        rhythm = raw_profile.get("learning_rhythm", {})
+        if isinstance(rhythm, dict):
+            rhythm_label = rhythm.get("label", "")
+
+    # 按权重分配：高优先级分配更多时间
+    total_priority_weight = 0
+    priority_weights = {1: 3, 2: 2, 3: 1}
+    for c in candidates:
+        p = c.get("plan_priority", 2)
+        total_priority_weight += priority_weights.get(p, 2)
+
+    planned_items = []
     cursor = start_at
     remaining = budget
 
-    # 重试用轻量兜底指引，避免审查循环反复打 LLM
-    use_fallback_guide = int(state.get("review_attempts", 0) or 0) > 0
+    for c in candidates:
+        if remaining < MIN_TASK_MINUTES:
+            break
+        p = c.get("plan_priority", 2)
+        weight = priority_weights.get(p, 2)
+        base = c.get("estimated_minutes", 30)
+        # 高优先级获得更大比例的时间
+        fair_share = int(budget * weight / total_priority_weight) if total_priority_weight > 0 else base
+        duration = min(max(fair_share, MIN_TASK_MINUTES), base, remaining)
+        duration = max(duration, MIN_TASK_MINUTES)
+        end_at = cursor + timedelta(minutes=duration)
+        planned_items.append({
+            "plan_id": c["plan_id"],
+            "knowledge_node_id": c["node_id"],
+            "title": c["plan_title"] + "：" + c["node_name"],
+            "description": c.get("node_description"),
+            "start_time": cursor.time(),
+            "end_time": end_at.time(),
+            "duration_minutes": duration,
+            "guide_content": None,
+        })
+        cursor = end_at
+        remaining -= duration
 
+    logger.info("[ScheduleAgent] 画像感知兜底排期完成: %d 个任务 (budget=%d, profile='%s')",
+                len(planned_items), budget, preferred_label[:20])
+    return {"planned_items": planned_items, "llm_reasoning": "fallback(profile-aware)", "llm_replan_decisions": []}
+
+
+
+
+
+async def generate_task_guides(state: ScheduleAgentState) -> dict[str, Any]:
+    """为排期方案中的每个任务生成学习指引（guide_content）"""
+    if state.get("skip_reason"):
+        return {}
+    planned_items = list(state.get("planned_items", []))
+    if not planned_items:
+        return {"planned_items": []}
+    use_fallback = int(state.get("review_attempts", 0) or 0) > 0
     async for db in get_db():
-        for candidate, duration in zip(candidates, durations):
-            if remaining < MIN_TASK_MINUTES:
-                break
-            duration = min(int(duration), remaining)
-            end_at = cursor + timedelta(minutes=duration)
-
-            plan = await db.get(Plan, candidate["plan_id"])
-            node = await db.get(KnowledgeNode, candidate["node_id"])
+        for item in planned_items:
+            plan = await db.get(Plan, item["plan_id"])
+            node = await db.get(KnowledgeNode, item["knowledge_node_id"])
             if plan is None or node is None:
                 continue
-
-            if use_fallback_guide:
-                guide = _fallback_guide(node.name, duration, node.description)
+            if use_fallback:
+                item["guide_content"] = _fallback_guide(node.name, item["duration_minutes"], node.description)
             else:
-                guide = await _generate_guide(plan, node, duration)
-
-            planned_items.append({
-                "plan_id": plan.id,
-                "knowledge_node_id": node.id,
-                "title": f"{plan.title}：{node.name}",
-                "description": node.description,
-                "start_time": cursor.time(),
-                "end_time": end_at.time(),
-                "duration_minutes": duration,
-                "guide_content": guide,
-            })
-            cursor = end_at
-            remaining -= duration
+                item["guide_content"] = await _generate_guide(plan, node, item["duration_minutes"])
         break
-
     return {"planned_items": planned_items}
 
 
@@ -530,29 +783,30 @@ async def persist_schedule(state: ScheduleAgentState) -> dict[str, Any]:
 
 def create_schedule_graph():
     """
-    创建 Schedule Agent 子图
+    创建 Schedule Agent 子图（LLM 驱动版）
 
     Loop 流程:
-        load_context → generate_schedule → schedule_review
-            ├─ pass → persist_schedule → END
-            └─ fail (未达上限) → retry generate_schedule
+        load_context -> llm_generate_schedule -> generate_task_guides -> schedule_review
+             +-- pass -> persist_schedule -> END
+             +-- fail (未达上限) -> retry llm_generate_schedule
     """
-
     graph = StateGraph(ScheduleAgentState)
     graph.add_node("load_context", load_schedule_context)
-    graph.add_node("generate_schedule", generate_schedule)
+    graph.add_node("llm_generate_schedule", llm_generate_schedule)
+    graph.add_node("generate_task_guides", generate_task_guides)
     graph.add_node("schedule_review", schedule_review_node)
     graph.add_node("persist_schedule", persist_schedule)
     graph.add_edge(START, "load_context")
-    graph.add_edge("load_context", "generate_schedule")
-    graph.add_edge("generate_schedule", "schedule_review")
+    graph.add_edge("load_context", "llm_generate_schedule")
+    graph.add_edge("llm_generate_schedule", "generate_task_guides")
+    graph.add_edge("generate_task_guides", "schedule_review")
     graph.add_conditional_edges(
-        "schedule_review",
-        review_router,
-        {"retry": "generate_schedule", "end": "persist_schedule"},
+        "schedule_review", review_router,
+        {"retry": "llm_generate_schedule", "end": "persist_schedule"},
     )
     graph.add_edge("persist_schedule", END)
     return graph.compile()
+
 
 
 async def run_schedule_graph(

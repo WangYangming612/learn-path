@@ -13,6 +13,8 @@ import {
 } from "@/services/api";
 import * as authApi from "@/services/auth";
 import type { LoginRequest, RegisterRequest, UserInfo } from "@/types";
+import { clearPlanCache } from "@/stores/planStore";
+import { clearTaskOrderCaches } from "@/services/tasks";
 
 interface AuthState {
   token: string | null;
@@ -54,6 +56,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   login: async (payload) => {
     set({ loading: true });
     try {
+      // 清除上一个用户的本地缓存
+      clearPlanCache();
+      clearTaskOrderCaches();
+
       const result = await authApi.login(payload);
       setStoredToken(result.access_token);
 
@@ -90,6 +96,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: () => {
+    clearPlanCache();
+    clearTaskOrderCaches();
     clearStoredToken();
     set({ token: null, user: null, loading: false });
   },

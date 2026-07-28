@@ -286,7 +286,7 @@ async def update_profile(user_id: str, updates: dict) -> dict:
     """
     if not updates:
         logger.info(f"[ProfileService] 无更新内容 (user_id={user_id})")
-        return {"success": True, "profile_changed": False, "profile_changelog": []}
+        return {"success": True, "profile_changed": False, "profile_changelog": [], "completeness": 0.0}
 
     try:
         from app.db.session import get_db as _get_db
@@ -325,12 +325,12 @@ async def update_profile(user_id: str, updates: dict) -> dict:
                 f"[ProfileService] 画像更新成功 "
                 f"(user_id={user_id}, dims={list(updates.keys())}, completeness={completeness})"
             )
-            return {"success": True, "profile_changed": True, "profile_changelog": changelog}
+            return {"success": True, "profile_changed": True, "profile_changelog": changelog, "completeness": completeness}
     except Exception as exc:
         logger.warning(
             f"[ProfileService] 画像更新失败 (user_id={user_id}): {exc}", exc_info=True
         )
-        return {"success": False, "profile_changed": False, "profile_changelog": []}
+        return {"success": False, "profile_changed": False, "profile_changelog": [], "completeness": 0.0}
 
 
 async def calibrate_dimension(user_id: str, dimension: str, comment: str) -> dict:

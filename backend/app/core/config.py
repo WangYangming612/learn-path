@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # What: 使用的模型名称
     # Why: 不同场景可能需要不同模型（如便宜模型做意图分类，强模型做路径生成）
     LLM_MODEL: str = "gpt-4o"
+    # What: LLM API 的代理地址（如 VPN/翻墙，格式 http://127.0.0.1:7890）
+    # Why: 在需要代理才能访问 API 的环境中必须配置此项
 
     # ── ChromaDB（预留，Step 2 后续阶段）─────────────────────
     # What: 向量数据库持久化目录路径

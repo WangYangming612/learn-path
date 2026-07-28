@@ -89,6 +89,7 @@ async def create_plan_from_draft(
     db: AsyncSession,
     user_id: int,
     draft: PlanDraft,
+    daily_budget: int = 30,
     priority: int = 2,
 ) -> Plan:
     """将 LLM 草稿保存为 Plan + KnowledgeNode"""
@@ -102,12 +103,14 @@ async def create_plan_from_draft(
 
     today = date.today()
     start_date = today
-    end_date = today + timedelta(days=max(parsed_goal.duration_months * 30, 1))
+    # 使用节点数量估算结束日期，确保计划长度覆盖所有日级节点
+    end_date = today + timedelta(days=max(parsed_goal.duration_months * 30, len(ordered_nodes), 1))
 
     plan = Plan(
         user_id=user_id,
         title=title,
         description=description,
+        daily_budget=daily_budget,
         status="active",
         priority=priority,
         start_date=start_date,

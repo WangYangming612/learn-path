@@ -11,7 +11,7 @@ const { Text } = Typography;
 
 const METRIC_LABELS: Array<[keyof ProfileData, string]> = [
   ["learning_style", "学习风格"],
-  ["best_time", "最佳学习时段"],
+  ["best_time_slots", "最佳学习时段"],
   ["learning_rhythm", "学习节奏"],
   ["feedback_baseline", "反馈基线"],
   ["persistence", "持续力"],

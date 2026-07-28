@@ -123,41 +123,68 @@ def _ensure_acyclic(nodes: list[KnowledgeNodeDraft]) -> None:
 
 
 def _build_fallback_draft(goal: str) -> dict[str, Any]:
-    """简单兜底草稿，避免 LLM 不可用时 API 完全失败"""
+    """按天粒度简单兜底草案，避免 LLM 不可用时 API 完全失败"""
 
     return {
         "goal_text": goal,
         "parsed_goal": {
             "domain": goal[:20] if goal else "学习目标",
-            "duration_months": 3,
+            "duration_months": 1,
             "current_level": "beginner",
             "target_depth": "introduction",
         },
         "nodes": [
             {
                 "id": "n1",
-                "title": "基础入门",
-                "description": "理解该领域的基础概念与核心术语",
-                "estimated_minutes": 300,
+                "title": "Day 1: 入门与基础概念",
+                "description": "了解该领域的基本概念、术语和核心思想，搭建学习环境",
+                "estimated_minutes": 90,
                 "prerequisite_ids": [],
             },
             {
                 "id": "n2",
-                "title": "核心技能",
-                "description": "掌握该领域最重要的实践技能",
-                "estimated_minutes": 420,
+                "title": "Day 2: 核心基础知识（上）",
+                "description": "学习该领域最基础的核心知识与技能",
+                "estimated_minutes": 90,
                 "prerequisite_ids": ["n1"],
             },
             {
                 "id": "n3",
-                "title": "综合应用",
-                "description": "通过项目或案例整合所学知识",
-                "estimated_minutes": 360,
+                "title": "Day 3: 核心基础知识（下）",
+                "description": "继续深入学习核心知识，掌握关键操作方法",
+                "estimated_minutes": 120,
                 "prerequisite_ids": ["n2"],
+            },
+            {
+                "id": "n4",
+                "title": "Day 4: 练习与巩固",
+                "description": "通过练习题巩固前三天所学内容，查漏补缺",
+                "estimated_minutes": 90,
+                "prerequisite_ids": ["n3"],
+            },
+            {
+                "id": "n5",
+                "title": "Day 5: 进阶应用",
+                "description": "学习进阶知识点，尝试解决更复杂的场景问题",
+                "estimated_minutes": 120,
+                "prerequisite_ids": ["n4"],
+            },
+            {
+                "id": "n6",
+                "title": "Day 6: 综合练习与项目",
+                "description": "通过小型项目整合前五天所学，锻炼实际应用能力",
+                "estimated_minutes": 120,
+                "prerequisite_ids": ["n5"],
+            },
+            {
+                "id": "n7",
+                "title": "Day 7: 复盘总结",
+                "description": "梳理知识体系，找出薄弱环节，规划后续学习方向",
+                "estimated_minutes": 60,
+                "prerequisite_ids": ["n6"],
             },
         ],
     }
-
 
 async def plan_agent_node(state: AgentState) -> dict[str, Any]:
     """

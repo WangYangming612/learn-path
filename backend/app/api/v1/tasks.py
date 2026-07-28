@@ -1,4 +1,4 @@
-"""每日任务 API 路由。"""
+﻿"""每日任务 API 路由。"""
 
 from datetime import date
 
@@ -26,6 +26,39 @@ from app.schemas.task import (
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
+
+@router.get('/diagnose-llm')
+async def diagnose_llm():
+    import httpx, datetime, logging
+    from app.core.config import settings
+    logger = logging.getLogger(__name__)
+    start = datetime.datetime.now()
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                settings.LLM_BASE_URL + '/chat/completions',
+                json={
+                    'model': 'deepseek-chat',
+                    'messages': [
+                        {'role': 'system', 'content': '用中文回复，只说一句话：连接测试成功'},
+                        {'role': 'user', 'content': '测试连接'},
+                    ],
+                    'max_tokens': 50,
+                },
+                headers={'Authorization': 'Bearer ' + settings.LLM_API_KEY, 'Content-Type': 'application/json'},
+            )
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        if resp.status_code == 200:
+            content = resp.json()['choices'][0]['message']['content']
+            return {'status': 'ok', 'response': str(content)[:200], 'elapsed': round(elapsed, 2)}
+        else:
+            body = resp.text[:300]
+            return {'status': 'error', 'error': f'HTTP {resp.status_code}: {body}', 'elapsed': round(elapsed, 2)}
+    except Exception as e:
+        elapsed = (datetime.datetime.now() - start).total_seconds()
+        logger.warning('[Diagnose] LLM连接失败: %s', e)
+        return {'status': 'error', 'error': str(e), 'error_type': type(e).__name__, 'elapsed': round(elapsed, 2)}
+
 @router.post("/generate", response_model=GenerateTasksResponse)
 async def generate_tasks(
     body: GenerateTasksRequest,
@@ -33,16 +66,18 @@ async def generate_tasks(
     db: AsyncSession = Depends(get_db),
 ) -> GenerateTasksResponse:
     """手动触发指定日期的学习任务排期。"""
-
+    import logging
+    logger = logging.getLogger(__name__)
     scheduled_date = body.scheduled_date or date.today()
     result = await run_schedule_graph(
         user_id=str(current_user.id),
         daily_budget=body.daily_budget,
         scheduled_date=scheduled_date,
     )
-    schedule_result = result.get("schedule_result") or {}
+
     tasks = await get_tasks_by_date(db, current_user.id, scheduled_date)
     total_minutes = sum(task.duration_minutes for task in tasks)
+    schedule_result = result.get('schedule_result') or {}
     await notification_service.publish_schedule_updated(
         current_user.id,
         date_str=str(scheduled_date),
@@ -50,10 +85,23 @@ async def generate_tasks(
         total_minutes=total_minutes,
         overflow_detected=bool(schedule_result.get("overflow_detected", False)),
     )
+    llm_reasoning = result.get('llm_reasoning', '') or ''
+    llm_error = result.get('llm_error', '') or ''
+    is_fallback = 'fallback' in llm_reasoning.lower() or '\u515c\u5e95' in llm_reasoning
+    llm_display = llm_reasoning[:200] if llm_reasoning else (llm_error[:200] if llm_error else None)
+
+    logger.info(
+        '[TasksAPI] 排期完成: user=%s, tasks=%d, fallback=%s',
+        current_user.id, len(tasks), is_fallback,
+    )
+
     return GenerateTasksResponse(
         scheduled_date=scheduled_date,
         tasks=[DailyTaskResponse(**serialize_daily_task(task)) for task in tasks],
+        llm_used=not is_fallback,
+        llm_reasoning=llm_display,
     )
+
 
 
 @router.get("/today", response_model=list[DailyTaskResponse])
@@ -80,3 +128,6 @@ async def set_task_status(
     if task is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return DailyTaskResponse(**serialize_daily_task(task))
+
+
+

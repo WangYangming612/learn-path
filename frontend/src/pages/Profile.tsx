@@ -2,10 +2,11 @@
  * 学习画像页面
  */
 
-import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Card, Col, Empty, Row, Timeline, Tag, Typography, message } from "antd";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Card, Col, Empty, Row, Timeline, Tag, Typography, message } from "antd";
 import { CheckCircleOutlined } from "@ant-design/icons";
 import ProfileRadar from "@/components/ProfileRadar";
+import SurveyQuiz from "@/components/SurveyQuiz";
 import WeeklyReport from "@/components/WeeklyReport";
 import { fetchProfileWithTimeline } from "@/services/profile";
 import { fetchTodayTasks } from "@/services/tasks";
@@ -23,10 +24,11 @@ const ProfilePage: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const [{ profile, timeline }, todayTasks] = await Promise.all([
+        const data = await Promise.all([
           fetchProfileWithTimeline(),
           fetchTodayTasks().catch(() => []),
         ]);
+        const [{ profile, timeline }, todayTasks] = data;
         setProfile(profile);
         setTimeline(timeline);
         setTasks(todayTasks);
@@ -38,6 +40,26 @@ const ProfilePage: React.FC = () => {
     };
 
     void load();
+  }, []);
+
+  const handleSurveyComplete = useCallback(() => {
+    setLoading(true);
+    const reload = async () => {
+      try {
+        const [{ profile, timeline }, todayTasks] = await Promise.all([
+          fetchProfileWithTimeline(),
+          fetchTodayTasks().catch(() => []),
+        ]);
+        setProfile(profile);
+        setTimeline(timeline);
+        setTasks(todayTasks);
+      } catch {
+        // ignore
+      } finally {
+        setLoading(false);
+      }
+    };
+    void reload();
   }, []);
 
   const confidence = useMemo(() => {
@@ -63,13 +85,7 @@ const ProfilePage: React.FC = () => {
       </div>
 
       {profile?.needs_initial_survey && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-          message="画像仍在初始化中"
-          description={profile.initial_survey_question || "系统会根据更多学习反馈持续校准画像。"}
-        />
+        <SurveyQuiz onComplete={handleSurveyComplete} />
       )}
 
       <Row gutter={[16, 16]}>

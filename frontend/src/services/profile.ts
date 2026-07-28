@@ -8,6 +8,7 @@ import type {
   ProfileData,
   ProfileHistoryItem,
   ProfileHistoryResponse,
+  ProfileRaw,
   ProfileResponse,
   ProfileTimelineItem,
 } from "@/types/profile";
@@ -20,14 +21,14 @@ function normalizeMetric(raw: unknown) {
   };
 }
 
-function normalizeProfile(raw: BackendProfileRaw): ProfileData {
+function normalizeProfile(raw: ProfileRaw): ProfileData {
   return {
-    learning_style: normalizeMetric(raw.learning_style),
-    best_time: normalizeMetric(raw.best_time),
-    learning_rhythm: normalizeMetric(raw.learning_rhythm),
-    feedback_baseline: normalizeMetric(raw.feedback_baseline),
-    persistence: normalizeMetric(raw.persistence),
-    knowledge_retention: normalizeMetric(raw.knowledge_retention),
+    learning_style: normalizeMetric(raw?.learning_style),
+    best_time_slots: normalizeMetric(raw?.best_time_slots),
+    learning_rhythm: normalizeMetric(raw?.learning_rhythm),
+    feedback_baseline: normalizeMetric(raw?.feedback_baseline),
+    persistence: normalizeMetric(raw?.persistence),
+    knowledge_retention: normalizeMetric(raw?.knowledge_retention),
   };
 }
 
@@ -59,12 +60,12 @@ function toTimelineItems(
 export async function fetchProfile(): Promise<ProfileResponse> {
   const { data } = await api.get<BackendProfileRaw>("/profile");
   return {
-    profile: normalizeProfile(data),
-    total_feedback_count: data.total_feedback_count ?? 0,
-    last_calibrated_at: data.last_calibrated_at ?? null,
-    needs_initial_survey: data.needs_initial_survey ?? false,
-    initial_survey_question: data.initial_survey_question ?? null,
-    updated_at: data.updated_at ?? data.last_calibrated_at ?? null,
+    profile: normalizeProfile(data?.profile),
+    total_feedback_count: data?.total_feedback_count ?? 0,
+    last_calibrated_at: data?.last_calibrated_at ?? null,
+    needs_initial_survey: data?.needs_initial_survey ?? false,
+    initial_survey_question: data?.initial_survey_question ?? null,
+    updated_at: data?.updated_at ?? data?.last_calibrated_at ?? null,
   };
 }
 
@@ -102,4 +103,22 @@ export async function fetchProfileWithTimeline(): Promise<{
       timeline: toTimelineItems([], profile.updated_at),
     };
   }
+}
+import type {
+  McAnswerItem,
+  McSurveySubmitResponse,
+  SurveyQuestionsResponse,
+} from "@/types/profile";
+export async function fetchSurveyQuestions(): Promise<SurveyQuestionsResponse> {
+  const { data } = await api.get<SurveyQuestionsResponse>("/profile/survey/questions");
+  return data;
+}
+
+export async function submitMcSurvey(
+  answers: McAnswerItem[]
+): Promise<McSurveySubmitResponse> {
+  const { data } = await api.post<McSurveySubmitResponse>("/profile/survey/submit-mc", {
+    answers,
+  });
+  return data;
 }

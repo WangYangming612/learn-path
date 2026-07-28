@@ -1,4 +1,4 @@
-"""
+﻿"""
 LearnPath API 主应用入口
 
 What: FastAPI 应用实例，作为整个后端服务的 HTTP 入口点
@@ -17,24 +17,39 @@ from app.api.v1.journals import router as journals_router
 from app.api.v1.plans import router as plans_router
 from app.api.v1.tasks import router as tasks_router
 from app.api.v1.profile import router as profile_router
+from app.core.config import settings
+import pathlib
+import os
+
+# 从.env文件加载代理配置（可选，VPN/翻墙用户才需要设置）
+env_path = pathlib.Path(__file__).resolve().parent / '.env'
+if env_path.exists():
+    for line in env_path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line.startswith('HTTP_PROXY=') or line.startswith('HTTPS_PROXY='):
+            key, val = line.split('=', 1)
+            val = val.strip(chr(34))
+            if val and key not in os.environ:
+                try:
+                    import socket
+                    host_part = val.replace('http://', '').replace('https://', '')
+                    host, port = host_part.split(':')
+                    sock = socket.create_connection((host, int(port)), timeout=1)
+                    sock.close()
+                    os.environ[key] = val
+                    print(f"[Proxy] {key} 可用，已加载")
+                except Exception:
+                    print(f"[Proxy] {key} 不可用（VPN未开启），跳过")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    FastAPI 应用生命周期管理
-
-    What: 在应用启动时启动 APScheduler，关闭时停止
-    Why: scheduler 需要在 FastAPI 事件循环内运行，使用 lifespan 管理其生命周期
-    """
     from app.core.scheduler import scheduler
-
     scheduler.start()
     yield
     scheduler.shutdown()
 
 
-# 创建 FastAPI 应用实例
 app = FastAPI(
     title="LearnPath API",
     description="个性化学习路径动态生成系统后端 API",
@@ -42,38 +57,36 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 配置 CORS 中间件
-# What: 跨域资源共享，允许前端浏览器跨域访问后端 API
-# Why: 前后端分离架构下，前端 localhost:5173 访问后端 localhost:8000 属于跨域请求
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    import logging
+    logging.getLogger(__name__).exception('[500] %s', exc)
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=500,
+        content={'detail': '服务器错误: ' + str(exc)[:300]},
+    )
+
+
+# CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # 开发阶段前端地址
-    ],
+    allow_origins=['http://localhost:5173'],
     allow_credentials=True,
-    allow_methods=["*"],  # 允许所有 HTTP 方法
-    allow_headers=["*"],  # 允许所有请求头
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-# 注册认证路由
-# What: 将 auth 模块的路由注册到 FastAPI 应用
-# Why: 不注册则路由不可用，include_router 统一管理所有子路由
-app.include_router(auth_router, prefix="/api/v1")
-app.include_router(events_router, prefix="/api/v1")
-app.include_router(feedback_router, prefix="/api/v1")
-app.include_router(journals_router, prefix="/api/v1")
-app.include_router(plans_router, prefix="/api/v1")
-app.include_router(tasks_router, prefix="/api/v1")
-app.include_router(profile_router, prefix="/api/v1")
+app.include_router(auth_router, prefix='/api/v1')
+app.include_router(events_router, prefix='/api/v1')
+app.include_router(feedback_router, prefix='/api/v1')
+app.include_router(journals_router, prefix='/api/v1')
+app.include_router(plans_router, prefix='/api/v1')
+app.include_router(tasks_router, prefix='/api/v1')
+app.include_router(profile_router, prefix='/api/v1')
 
 
-
-@app.get("/")
+@app.get('/')
 async def root():
-    """
-    根路由健康检查
-
-    What: 返回服务运行状态
-    Why: 用于前端和监控系统快速验证后端是否正常运行
-    """
-    return {"status": "ok"}
+    return {'status': 'ok'}

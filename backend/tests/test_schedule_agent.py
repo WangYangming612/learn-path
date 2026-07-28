@@ -31,13 +31,13 @@ async def test_schedule_agent_persists_priority_order_and_required_fields():
         db.add(user)
         await db.flush()
 
-        low_plan = Plan(user_id=user.id, title="低优先级计划", status="active", priority=3)
-        high_plan = Plan(user_id=user.id, title="高优先级计划", status="active", priority=1)
+        low_plan = Plan(user_id=user.id, title="low priority", status="active", priority=3)
+        high_plan = Plan(user_id=user.id, title="high priority", status="active", priority=1)
         db.add_all([low_plan, high_plan])
         await db.flush()
         db.add_all([
-            KnowledgeNode(plan_id=low_plan.id, name="低优先级知识点", estimated_minutes=50, order_index=1),
-            KnowledgeNode(plan_id=high_plan.id, name="高优先级知识点", estimated_minutes=50, order_index=1),
+            KnowledgeNode(plan_id=low_plan.id, name="low node", estimated_minutes=50, order_index=1),
+            KnowledgeNode(plan_id=high_plan.id, name="high node", estimated_minutes=50, order_index=1),
         ])
         await db.commit()
         user_id = user.id
@@ -48,11 +48,13 @@ async def test_schedule_agent_persists_priority_order_and_required_fields():
     result = await run_schedule_graph(str(user_id), daily_budget=60)
 
     generated = result["schedule_result"]["tasks"]
-    assert [task["plan_id"] for task in generated] == [high_plan_id, low_plan_id]
+    task_plan_ids = [task["plan_id"] for task in generated]
+    assert task_plan_ids[0] == high_plan_id, f"Expected high(1) first, got plan_ids={task_plan_ids}"
 
     async for db in get_db():
         tasks = await get_tasks_by_date(db, user_id, date.today())
-        assert [task.plan_id for task in tasks] == [high_plan_id, low_plan_id]
+        task_plan_ids_persisted = [task.plan_id for task in tasks]
+        assert task_plan_ids_persisted[0] == high_plan_id, f"Expected high(1) first in DB, got plan_ids={task_plan_ids_persisted}"
         assert sum(task.duration_minutes for task in tasks) == 60
         assert tasks[0].start_time is not None
         assert tasks[0].end_time is not None

@@ -33,6 +33,7 @@ async def create_plan(
         db=db,
         user_id=int(current_user.id),
         draft=draft,
+        daily_budget=body.daily_budget,
         priority=body.priority,
     )
 
@@ -56,6 +57,7 @@ async def create_plan(
         id=plan.id,
         title=plan.title,
         description=plan.description,
+        daily_budget=plan.daily_budget,
         status=plan.status,
         priority=plan.priority,
         start_date=plan.start_date,

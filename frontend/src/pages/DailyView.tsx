@@ -274,7 +274,7 @@ const DailyViewPage: React.FC = () => {
 
   const handleGenerate = async () => {
     try {
-      await generate(user?.daily_available_minutes);
+      await generate();
       message.success("今日排期已生成");
     } catch (err) {
       message.error(err instanceof Error ? err.message : "生成排期失败");

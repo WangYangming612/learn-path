@@ -13,13 +13,31 @@ import {
   type TaskStatus,
 } from "@/types";
 
-const ORDER_KEY_PREFIX = "learnpath_task_order_";
+export const ORDER_KEY_PREFIX = "learnpath_task_order_";
 
 function todayKey(date = new Date()): string {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
+}
+
+/** 清除所有本地任务排序缓存（换账号时调用） */
+export function clearTaskOrderCaches(): void {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(ORDER_KEY_PREFIX)) {
+        keysToRemove.push(key);
+      }
+    }
+    for (const key of keysToRemove) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 /** 读取本地拖拽顺序（后端暂无 reorder 接口） */

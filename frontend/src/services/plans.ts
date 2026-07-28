@@ -84,18 +84,19 @@ export async function fetchPlanDetail(id: string): Promise<{ plan: PlanDetail; g
 
 export async function createPlan(payload: CreatePlanRequest): Promise<CreatePlanResponse> {
   // 后端 LearningGoalRequest 仅消费 goal + priority；title 由前端本地保留
-  const { data } = await api.post<BackendPlanDetailRaw | CreatePlanResponse>('/plans', {
-    goal: payload.goal,
-    priority: payload.priority,
-  });
+    const { data } = await api.post<BackendPlanDetailRaw | CreatePlanResponse>('/plans', {
+        goal: payload.goal,
+        priority: payload.priority,
+        daily_budget: payload.daily_budget,
+    });
 
-  if (data && 'plan' in data && data.plan) {
+    if (data && 'plan' in data && data.plan) {
     const wrapped = data as CreatePlanResponse;
-    return {
-      ...wrapped,
-      plan: normalizePlanDetail(wrapped.plan as unknown as BackendPlanRaw, undefined, undefined, payload.title),
-    };
-  }
+        return {
+            ...wrapped,
+            plan: normalizePlanDetail(wrapped.plan as unknown as BackendPlanRaw, undefined, undefined, payload.title),
+        };
+    }
 
   const detail = data as BackendPlanDetailRaw;
   const plan = normalizePlanDetail(detail, undefined, undefined, payload.title);

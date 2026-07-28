@@ -27,9 +27,18 @@ from app.agents.profile_agent import run_survey_first, run_survey_next
 from app.core.profile_service import (
     calibrate_dimension,
     get_profile_history,
+    update_profile,
     get_user_profile,
 )
 from app.models.user import User
+from app.schemas.survey import (
+    McAnswerItem,
+    McSurveySubmitRequest,
+    McSurveySubmitResponse,
+    SurveyOptionSchema,
+    SurveyQuestionSchema,
+    SurveyQuestionsResponse,
+)
 from app.schemas.profile import (
     CalibrateRequest,
     CalibrateResponse,
@@ -153,6 +162,65 @@ async def get_survey_next(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="摸底问答启动失败，请稍后再试",
         )
+
+
+
+
+@router.get("/survey/questions", response_model=SurveyQuestionsResponse)
+async def get_survey_questions(
+    current_user: User = Depends(get_current_user),
+) -> SurveyQuestionsResponse:
+    """
+    获取摸底选择题
+    """
+    from app.core.survey_questions import get_all_questions
+
+    user_id = str(current_user.id)
+    profile_data = await get_user_profile(user_id)
+    if not profile_data.get("needs_initial_survey", True):
+        return SurveyQuestionsResponse(questions=[], total=0)
+
+    questions_raw = get_all_questions()
+    questions = [
+        SurveyQuestionSchema(
+            id=q["id"],
+            dimension=q["dimension"],
+            question=q["question"],
+            options=[
+                SurveyOptionSchema(option_id=opt["option_id"], text=opt["text"])
+                for opt in q["options"]
+            ],
+        )
+        for q in questions_raw
+    ]
+    return SurveyQuestionsResponse(questions=questions, total=len(questions))
+
+
+@router.post("/survey/submit-mc", response_model=McSurveySubmitResponse)
+async def submit_mc_survey(
+    body: McSurveySubmitRequest,
+    current_user: User = Depends(get_current_user),
+) -> McSurveySubmitResponse:
+    """
+    提交选择题答案
+    """
+    from app.core.survey_questions import calculate_profile
+
+    user_id = str(current_user.id)
+    result = calculate_profile(
+        [{"question_id": a.question_id, "option_id": a.option_id} for a in body.answers]
+    )
+    update_result = await update_profile(user_id, result["profile_updates"])
+    completeness = update_result.get("completeness", 0.6)
+    logger.info(
+        "[ProfileAPI] MC survey done user_id=%s dims=%s completeness=%s",
+        user_id,
+        list(result["profile_updates"].keys()),
+        completeness,
+    )
+    return McSurveySubmitResponse(
+        success=update_result.get("success", True), completeness=completeness
+    )
 
 
 @router.post("/survey", response_model=SurveyAnswerResponse)

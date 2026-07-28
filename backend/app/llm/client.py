@@ -70,9 +70,9 @@ class LLMClient:
         # 支持 OPENAI_BASE_URL（标准 OpenAI 环境变量）和 LLM_BASE_URL（项目自定义）
         self.base_url: str = (
             config.get("base_url")
+            or settings.LLM_BASE_URL
             or os.getenv("OPENAI_BASE_URL")
             or os.getenv("LLM_BASE_URL")
-            or settings.LLM_BASE_URL
             or "https://api.openai.com/v1"
         )
 

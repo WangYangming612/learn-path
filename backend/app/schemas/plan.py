@@ -17,6 +17,7 @@ class LearningGoalRequest(BaseModel):
 
     goal: str = Field(..., min_length=1, description="自然语言学习目标")
     priority: int = Field(default=2, ge=1, le=3, description="计划优先级：1（高）/ 2（中）/ 3（低）")
+    daily_budget: int = Field(default=30, ge=10, le=480, description="每日预算（分钟）")
 
 
 class ParsedLearningGoal(BaseModel):
@@ -66,6 +67,7 @@ class PlanResponse(BaseModel):
     id: int
     title: str
     description: str | None = None
+    daily_budget: int
     status: str
     priority: int
     start_date: date | None = None

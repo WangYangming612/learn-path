@@ -14,7 +14,16 @@ import {
   type PlanSummary,
 } from "@/types";
 
-const PLAN_CACHE_KEY = "learnpath_plan_cache";
+export const PLAN_CACHE_KEY = "learnpath_plan_cache";
+
+/** 清除本地计划缓存（换账号时调用） */
+export function clearPlanCache(): void {
+  try {
+    localStorage.removeItem(PLAN_CACHE_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 function readPlanCache(): PlanDetail[] {
   try {

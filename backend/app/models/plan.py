@@ -55,6 +55,9 @@ class Plan(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(
         Text, default=None, comment="计划描述，用户输入的自然语言学习目标"
     )
+    daily_budget: Mapped[int] = mapped_column(
+        Integer, default=30, nullable=False, comment="每日预算（分钟）"
+    )
 
     # ── 状态管理 ────────────────────────────────────────────
     status: Mapped[str] = mapped_column(
