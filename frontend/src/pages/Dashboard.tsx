@@ -1,10 +1,10 @@
 /**
- * Dashboard 工作台 — 欢迎与功能预览
+ * Dashboard 工作台 — 学习概览 + 功能入口
  */
 
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button, Col, Row, Tag, Typography } from "antd";
+import { Button, Card, Col, Row, Tag, Typography, message } from "antd";
 import {
   BookOutlined,
   CalendarOutlined,
@@ -14,6 +14,10 @@ import {
   UserOutlined,
 } from "@ant-design/icons";
 import { useAuth } from "@/hooks/useAuth";
+import { fetchPlans } from "@/services/plans";
+import { fetchTodayTasks } from "@/services/tasks";
+import { fetchProfile } from "@/services/profile";
+import type { DailyTask } from "@/types";
 
 const { Title, Paragraph, Text } = Typography;
 
@@ -50,23 +54,51 @@ const FEATURES = [
     icon: <UserOutlined />,
     title: "学习画像",
     desc: "六维雷达图刻画风格、节奏与持续力，置信度随学习生长。",
-    step: "即将上线",
+    step: "已开放",
     tone: "slate",
+    path: "/profile",
   },
 ] as const;
 
 const DashboardPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [tasks, setTasks] = useState<DailyTask[]>([]);
+  const [activePlans, setActivePlans] = useState(0);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+
   const hour = new Date().getHours();
   const greeting =
-    hour < 6
-      ? "夜深了"
-      : hour < 12
-        ? "早上好"
-        : hour < 18
-          ? "下午好"
-          : "晚上好";
+    hour < 6 ? "夜深了" : hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [taskList, planList] = await Promise.all([
+          fetchTodayTasks().catch(() => []),
+          fetchPlans().catch(() => ({ plans: [], total_daily_budget: 0, user_daily_available: 90, remaining_daily: 0 })),
+        ]);
+        setTasks(taskList);
+        setActivePlans(planList.plans.filter((plan) => plan.status === "active").length);
+        await fetchProfile().catch(() => null);
+        setProfileLoaded(true);
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : "加载仪表盘失败");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void load();
+  }, []);
+
+  const stats = useMemo(() => {
+    const total = tasks.length;
+    const completed = tasks.filter((task) => task.status === "completed").length;
+    const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    return { total, completed, completionRate };
+  }, [tasks]);
 
   return (
     <div className="dash">
@@ -79,16 +111,10 @@ const DashboardPage: React.FC = () => {
             {greeting}，{user?.username}
           </Title>
           <Paragraph className="dash-hero__lead">
-            欢迎来到 LearnPath。用一句话描述学习目标，即可生成知识路径与可完成性评估。
-            从创建第一个计划开始，把目标落成可执行的路径。
+            欢迎来到 LearnPath。这里展示你的今日学习概览、当前画像状态与能力入口。
           </Paragraph>
           <div className="dash-hero__cta">
-            <Button
-              type="primary"
-              size="large"
-              icon={<RocketOutlined />}
-              onClick={() => navigate("/plans?create=1")}
-            >
+            <Button type="primary" size="large" icon={<RocketOutlined />} onClick={() => navigate("/plans?create=1")}>
               创建第一个计划
             </Button>
             <Button size="large" icon={<CalendarOutlined />} onClick={() => navigate("/daily")}>
@@ -106,7 +132,7 @@ const DashboardPage: React.FC = () => {
             </div>
             <span className="dash-orbit__chip dash-orbit__chip--1">Plan</span>
             <span className="dash-orbit__chip dash-orbit__chip--2">Schedule</span>
-            <span className="dash-orbit__chip dash-orbit__chip--3">Feedback</span>
+            <span className="dash-orbit__chip dash-orbit__chip--3">Profile</span>
           </div>
         </div>
       </section>
@@ -114,23 +140,50 @@ const DashboardPage: React.FC = () => {
       <section className="dash-section">
         <div className="dash-section__head">
           <Title level={4} style={{ margin: 0 }}>
+            学习概览
+          </Title>
+          <Text type="secondary">今日任务与活跃计划的当前状态</Text>
+        </div>
+        <Row gutter={[16, 16]}>
+          {[
+            { label: "今日任务数", value: stats.total },
+            { label: "已完成任务数", value: stats.completed },
+            { label: "完成率", value: `${stats.completionRate}%` },
+            { label: "活跃学习计划数", value: activePlans },
+          ].map((item) => (
+            <Col xs={12} lg={6} key={item.label}>
+              <Card loading={loading}>
+                <Text type="secondary">{item.label}</Text>
+                <Title level={3} style={{ margin: "8px 0 0" }}>{item.value}</Title>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+        {!profileLoaded && (
+          <Text type="secondary" style={{ display: "block", marginTop: 8 }}>
+            画像数据加载失败时，Dashboard 仍可正常展示任务与计划概览。
+          </Text>
+        )}
+      </section>
+
+      <section className="dash-section">
+        <div className="dash-section__head">
+          <Title level={4} style={{ margin: 0 }}>
             能力一览
           </Title>
-          <Text type="secondary">学习计划与今日任务已开放，画像能力陆续接入</Text>
+          <Text type="secondary">学习计划、每日任务与画像能力已开放</Text>
         </div>
 
         <Row gutter={[20, 20]}>
           {FEATURES.map((item) => (
             <Col xs={24} sm={12} xl={6} key={item.key}>
               <article
-                className={`dash-card dash-card--${item.tone}${"path" in item ? " dash-card--clickable" : ""}`}
-                onClick={() => {
-                  if ("path" in item && item.path) navigate(item.path);
-                }}
-                role={"path" in item ? "button" : undefined}
-                tabIndex={"path" in item ? 0 : undefined}
+                className={`dash-card dash-card--${item.tone} dash-card--clickable`}
+                onClick={() => navigate(item.path)}
+                role="button"
+                tabIndex={0}
                 onKeyDown={(e) => {
-                  if ("path" in item && item.path && (e.key === "Enter" || e.key === " ")) {
+                  if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     navigate(item.path);
                   }
@@ -150,8 +203,7 @@ const DashboardPage: React.FC = () => {
 
       <section className="dash-footnote">
         <Text type="secondary">
-          账号：{user?.email || user?.username} · 日可用时长{" "}
-          {user?.daily_available_minutes ?? 90} 分钟
+          账号：{user?.email || user?.username} · 日可用时长 {user?.daily_available_minutes ?? 90} 分钟
         </Text>
       </section>
     </div>
