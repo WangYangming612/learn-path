@@ -11,7 +11,6 @@ import {
   type Edge,
   type Node,
 } from "@xyflow/react";
-import dagre from "dagre";
 import { Tag, Typography } from "antd";
 import { BuildOutlined } from "@ant-design/icons";
 import type { KnowledgeNode, PathGraphData } from "@/types";
@@ -44,26 +43,13 @@ function getNodeStyle(node: KnowledgeNode) {
 }
 
 function layoutGraph(data: PathGraphData) {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 28, ranksep: 52, marginx: 16, marginy: 16 });
-  g.setDefaultEdgeLabel(() => ({}));
-
-  data.nodes.forEach((node) => {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
-  });
-  data.edges.forEach((edge) => g.setEdge(edge.source, edge.target));
-  dagre.layout(g);
-
-  const nodes: Node[] = data.nodes.map((node) => {
-    const pos = g.node(node.id);
-    return {
-      id: node.id,
-      type: "default",
-      position: { x: pos.x - NODE_WIDTH / 2, y: pos.y - NODE_HEIGHT / 2 },
-      data: { node },
-      style: getNodeStyle(node),
-    };
-  });
+  const nodes: Node[] = data.nodes.map((node, index) => ({
+    id: node.id,
+    type: "default",
+    position: { x: index * (NODE_WIDTH + 48), y: 0 },
+    data: { node },
+    style: getNodeStyle(node),
+  }));
 
   const edges: Edge[] = data.edges.map((edge) => ({
     id: `${edge.source}-${edge.target}`,
