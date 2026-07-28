@@ -1,7 +1,7 @@
 /**
  * SSE 工具与全局事件钩子
  *
- * - useSSE：可选接入 GET /events/stream（后端尚未实现时静默失败）
+ * - useSSE：接入 GET /api/v1/events/stream?token=
  * - readSSEStream 见 @/utils/sse（供 feedback 流式接口使用）
  */
 
@@ -13,14 +13,14 @@ export type SSEHandler = (eventType: string, data: unknown) => void;
 export { readSSEStream } from "@/utils/sse";
 
 interface UseSSEOptions {
-  /** 是否启用全局 SSE（默认 false，等 /events/stream 可用后再开） */
+  /** 是否启用全局 SSE（默认 false，页面按需开启） */
   enabled?: boolean;
   onEvent?: SSEHandler;
 }
 
 /**
  * 全局 EventSource 钩子（契约：GET /api/v1/events/stream?token=）
- * 当前后端未挂载该路由时保持断开，不影响页面。
+ * 后端已实现 schedule_updated / weekly_report / intervention 等推送。
  */
 export function useSSE(options: UseSSEOptions = {}) {
   const { enabled = false, onEvent } = options;

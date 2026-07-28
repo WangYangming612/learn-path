@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.schedule_agent import run_schedule_graph
 from app.api.deps import get_current_user
-from app.core.task_service import get_tasks_by_date, serialize_daily_task, update_task_status
+from app.core.notification_service import notification_service
+from app.core.task_service import (
+    get_tasks_by_date,
+    serialize_daily_task,
+    serialize_task_item_for_sse,
+    update_task_status,
+)
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.task import (
@@ -29,12 +35,21 @@ async def generate_tasks(
     """手动触发指定日期的学习任务排期。"""
 
     scheduled_date = body.scheduled_date or date.today()
-    await run_schedule_graph(
+    result = await run_schedule_graph(
         user_id=str(current_user.id),
         daily_budget=body.daily_budget,
         scheduled_date=scheduled_date,
     )
+    schedule_result = result.get("schedule_result") or {}
     tasks = await get_tasks_by_date(db, current_user.id, scheduled_date)
+    total_minutes = sum(task.duration_minutes for task in tasks)
+    await notification_service.publish_schedule_updated(
+        current_user.id,
+        date_str=str(scheduled_date),
+        tasks=[serialize_task_item_for_sse(task) for task in tasks],
+        total_minutes=total_minutes,
+        overflow_detected=bool(schedule_result.get("overflow_detected", False)),
+    )
     return GenerateTasksResponse(
         scheduled_date=scheduled_date,
         tasks=[DailyTaskResponse(**serialize_daily_task(task)) for task in tasks],

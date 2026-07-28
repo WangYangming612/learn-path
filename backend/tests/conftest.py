@@ -162,6 +162,8 @@ def _ensure_schema():
     async def _migrate():
         engine = get_engine()
         async with engine.begin() as conn:
+            # 空库时先建表，再做缺列迁移；否则 PRAGMA 空结果会误走 ALTER TABLE
+            await conn.run_sync(Base.metadata.create_all)
             for table in Base.metadata.sorted_tables:
                 table_name = table.name
                 # 查询数据库中该表现有列名

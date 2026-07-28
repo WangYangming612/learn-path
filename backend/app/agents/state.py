@@ -5,6 +5,7 @@ What: 定义基于 LangGraph 的通用智能体状态基类 AgentState
 Why: 作为所有 Agent 状态的基础类型，确保类型安全和结构一致
 """
 
+from datetime import date
 from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage
@@ -207,3 +208,28 @@ class ProfileAgentState(AgentState):
     calibration_result: str | None
     profile_changed: bool | None
     profile_changelog: list[dict] | None
+
+
+class ScheduleAgentState(AgentState):
+    """
+    排期智能体状态
+
+    What: 扩展 AgentState，承载生成排期 → 审查 → 落库的子图状态
+    Why: 支持 LangGraph 审核循环，并在节点间传递排期中间结果
+
+    Attributes:
+        daily_budget: 当日可用分钟数（可选，缺省从画像/用户配置读取）
+        scheduled_date: 目标排期日期
+        schedule_context: 加载后的排期上下文（候选节点、时长、起点等）
+        planned_items: 待审核的排期草案
+        schedule_result: 最终排期结果摘要
+        overflow_detected: 是否发生预算溢出压缩
+        skip_reason: 无可排期内容时的跳过原因
+    """
+    daily_budget: int | None
+    scheduled_date: date | str | None
+    schedule_context: dict | None
+    planned_items: list[dict] | None
+    schedule_result: dict | None
+    overflow_detected: bool
+    skip_reason: str | None

@@ -11,6 +11,17 @@ from sqlalchemy.orm import selectinload
 
 from app.models.daily_task import DailyTask
 
+def _format_hhmm(value: Any) -> str | None:
+    """将 time / datetime 格式化为 HH:MM。"""
+
+    if value is None:
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%H:%M")
+    text = str(value)
+    return text[:5] if len(text) >= 5 else text
+
+
 def serialize_daily_task(task: DailyTask) -> dict[str, Any]:
     """转换 ORM 任务为 API 响应字段。"""
 
@@ -28,6 +39,24 @@ def serialize_daily_task(task: DailyTask) -> dict[str, Any]:
         "guide_content": task.guide_content,
         "status": task.status,
         "completed_at": task.completed_at,
+    }
+
+
+def serialize_task_item_for_sse(task: DailyTask) -> dict[str, Any]:
+    """转换任务为 sse-events.md 中的 TaskItem 结构。"""
+
+    title = task.title or ""
+    is_review = "复习" in title or bool(getattr(task, "is_review", False))
+    return {
+        "id": str(task.id),
+        "plan_title": task.plan.title if task.plan else "",
+        "title": title,
+        "start_time": _format_hhmm(task.start_time),
+        "end_time": _format_hhmm(task.end_time),
+        "duration_minutes": task.duration_minutes,
+        "guide_content": task.guide_content,
+        "status": task.status,
+        "is_review": is_review,
     }
 
 
